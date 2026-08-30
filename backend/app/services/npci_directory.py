@@ -57,28 +57,40 @@ class NPCIDirectoryService:
         if len(digits) < 10:
             return None
 
-        # 1. Live Banking Provider (Setu / Cashfree) if configured in backend/.env
+        # 1. Live Banking Provider (Setu API) if configured in backend/.env
         setu_client_id = os.getenv("SETU_CLIENT_ID")
         setu_secret = os.getenv("SETU_CLIENT_SECRET")
+        product_instance_id = os.getenv("SETU_PRODUCT_INSTANCE_ID", setu_client_id)
+
         if setu_client_id and setu_secret:
+            headers = {
+                "x-client-id": setu_client_id,
+                "x-client-secret": setu_secret,
+                "x-product-instance-id": product_instance_id,
+                "content-type": "application/json",
+            }
             try:
-                async with httpx.AsyncClient(timeout=4.0) as client:
-                    resp = await client.post(
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    for endpoint in [
+                        "https://dg-sandbox.setu.co/api/verify/upi",
+                        "https://dg-sandbox.setu.co/api/verify/vpa",
                         "https://prod.setu.co/api/v1/verify/vpa",
-                        headers={"X-Client-Id": setu_client_id, "X-Client-Secret": setu_secret},
-                        json={"vpa": f"{digits}@upi"}
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        return {
-                            "name": data.get("name", "").upper(),
-                            "bank": data.get("bank_name", "Indian Banking Network"),
-                            "vpa": f"{digits}@upi",
-                            "phone": f"+91 {digits}",
-                            "kyc_status": "VERIFIED_FULL_KYC",
-                            "is_verified": True,
-                            "provider": "Setu Live NPCI Switch",
-                        }
+                    ]:
+                        try:
+                            resp = await client.post(endpoint, headers=headers, json={"vpa": f"{digits}@upi"})
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                return {
+                                    "name": (data.get("name") or data.get("account_holder_name") or "").upper(),
+                                    "bank": data.get("bank_name", "Indian Banking Network"),
+                                    "vpa": f"{digits}@upi",
+                                    "phone": f"+91 {digits}",
+                                    "kyc_status": "VERIFIED_FULL_KYC",
+                                    "is_verified": True,
+                                    "provider": "Setu Live NPCI Switch",
+                                }
+                        except Exception:
+                            continue
             except Exception:
                 pass
 

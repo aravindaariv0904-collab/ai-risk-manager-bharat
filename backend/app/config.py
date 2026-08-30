@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 
     ENVIRONMENT: str = "development"
     LOG_LEVEL: str = "INFO"
@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_ID: str = "rzp_test_placeholder"
     RAZORPAY_KEY_SECRET: str = "placeholder"
     RAZORPAY_WEBHOOK_SECRET: str = "placeholder"
+
+    SETU_CLIENT_ID: str = ""
+    SETU_CLIENT_SECRET: str = ""
+    SETU_PRODUCT_INSTANCE_ID: str = ""
 
     GEMINI_API_KEY: str = "placeholder"
 
