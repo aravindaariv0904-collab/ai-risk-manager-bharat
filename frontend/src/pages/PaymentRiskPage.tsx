@@ -321,22 +321,27 @@ export default function PaymentRiskPage() {
         if (found) {
           setSelectedMerchant(found)
           setValue('merchant_id', found.id)
-          setLookupMessage(`✓ Scanned & Verified: ${found.business_name}`)
+          if (found.is_verified) {
+            setLookupMessage(`✓ Scanned & Verified: ${found.business_name}`)
+          } else {
+            setLookupMessage(`⚠️ Unverified Recipient: ${found.business_name} — AI Fraud check required`)
+          }
         } else if (extractedName || extractedVpa) {
           // Dynamic client merchant object
           const displayName = extractedName || (extractedVpa.includes('@') ? extractedVpa.split('@')[0].toUpperCase() : 'UPI Recipient')
           const dynamicMerchant: Merchant = {
-            id: 'd83675e1-4899-4671-81a2-c76e921cb9c8', // mapped user UUID
+            id: 'd83675e1-4899-4671-81a2-c76e921cb9c8',
             user_id: 'd83675e1-4899-4671-81a2-c76e921cb9c8',
             business_name: displayName,
             business_category: 'Retail & Services',
             upi_id: extractedVpa,
-            risk_profile: { baseline_safety: 'verified_upi', vpa: extractedVpa },
+            is_verified: false,
+            risk_profile: { baseline_safety: 'unverified_upi', is_verified: false, vpa: extractedVpa },
             created_at: new Date().toISOString(),
           }
           setSelectedMerchant(dynamicMerchant)
           setValue('merchant_id', dynamicMerchant.id)
-          setLookupMessage(`✓ Scanned & Verified: ${displayName}`)
+          setLookupMessage(`⚠️ Unverified Recipient: ${displayName} — AI Fraud check required`)
         }
       } catch (err) {
         console.error('QR lookup error', err)
@@ -662,29 +667,53 @@ export default function PaymentRiskPage() {
                 </div>
               )}
 
-              {/* Verified Merchant Identification Card */}
+              {/* Verified / Unverified Recipient Identification Card */}
               {selectedMerchant ? (
-                <div className="rounded-xl bg-gradient-to-r from-emerald-50/80 to-teal-50/80 border border-emerald-200 p-4 animate-fade-in">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
-                        <Store className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <p className="font-bold text-sm text-emerald-950">{selectedMerchant.business_name}</p>
-                          <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-200/60 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
-                            <ShieldCheck className="h-3 w-3 text-emerald-600" />
-                            Verified
-                          </span>
+                selectedMerchant.is_verified ? (
+                  <div className="rounded-xl bg-gradient-to-r from-emerald-50/80 to-teal-50/80 border border-emerald-200 p-4 animate-fade-in">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+                          <Store className="h-5 w-5" />
                         </div>
-                        <p className="text-xs text-emerald-700 capitalize">
-                          {selectedMerchant.business_category || 'Retail Store'} · Bharat Protected
-                        </p>
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <p className="font-bold text-sm text-emerald-950">{selectedMerchant.business_name}</p>
+                            <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-200/60 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                              <ShieldCheck className="h-3 w-3 text-emerald-600" />
+                              Verified Merchant
+                            </span>
+                          </div>
+                          <p className="text-xs text-emerald-700 capitalize">
+                            {selectedMerchant.business_category || 'Retail Store'} · Bharat Protected
+                          </p>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="rounded-xl bg-gradient-to-r from-amber-50/90 to-orange-50/80 border border-amber-200 p-4 animate-fade-in">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-700">
+                          <AlertTriangle className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <p className="font-bold text-sm text-amber-950">{selectedMerchant.business_name}</p>
+                            <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-200/80 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+                              <AlertTriangle className="h-3 w-3 text-amber-600" />
+                              Unverified Recipient
+                            </span>
+                          </div>
+                          <p className="text-xs text-amber-700">
+                            {selectedMerchant.upi_id || 'External UPI QR'} · First-time payment · Verify before transfer
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
               ) : (
                 <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center">
                   <p className="text-xs text-muted-foreground">Identify a merchant via Mobile, QR, or Directory above</p>

@@ -15,6 +15,7 @@ class TransactionContext:
     hour: int
     day_of_week: int
     is_new_recipient: bool
+    is_unverified_merchant: bool
     txn_count_1h: int
     txn_count_24h: int
     txn_count_7d: int
@@ -29,6 +30,7 @@ class TransactionContext:
 class RuleEngine:
     def __init__(self):
         self.rules = [
+            ("unverified_recipient_qr", self._check_unverified_recipient, 25),
             ("new_recipient_high_amount", self._check_new_recipient_high_amount, 30),
             ("rapid_repeated_txns", self._check_rapid_repeated, 25),
             ("unusual_time", self._check_unusual_time, 15),
@@ -49,6 +51,11 @@ class RuleEngine:
                     score_impact=score
                 ))
         return reasons
+
+    def _check_unverified_recipient(self, ctx: TransactionContext):
+        if ctx.is_unverified_merchant:
+            return True, "Unverified recipient. This is a personal/external QR without verified merchant registry.", 25
+        return False, "", 0
 
     def _check_new_recipient_high_amount(self, ctx: TransactionContext):
         if ctx.is_new_recipient and ctx.amount > ctx.avg_amount * 3 and ctx.avg_amount > 0:
@@ -111,6 +118,17 @@ class BehavioralBaseline:
 
         is_new_recipient = len(merchant_txns) == 0
 
+        # Check if merchant is verified
+        is_unverified = False
+        try:
+            m_resp = self.supabase.table("merchants").select("*").eq("id", merchant_id).maybe_single().execute()
+            if m_resp.data:
+                profile = m_resp.data.get("risk_profile") or {}
+                if isinstance(profile, dict) and profile.get("is_verified") is False:
+                    is_unverified = True
+        except Exception:
+            pass
+
         amounts = [txn["amount"] for txn in recent_txns]
         avg_amount = float(np.mean(amounts)) if amounts else 0
         median_amount = float(np.median(amounts)) if amounts else 0
@@ -144,6 +162,7 @@ class BehavioralBaseline:
             hour=hour,
             day_of_week=day_of_week,
             is_new_recipient=is_new_recipient,
+            is_unverified_merchant=is_unverified,
             txn_count_1h=txn_count_1h,
             txn_count_24h=txn_count_24h,
             txn_count_7d=txn_count_7d,

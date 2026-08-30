@@ -54,9 +54,10 @@ async def lookup_merchant(
             if existing.data:
                 res = dict(existing.data)
                 res["upi_id"] = pa
+                res["is_verified"] = res.get("risk_profile", {}).get("is_verified", False)
                 return MerchantResponse(**res)
 
-            # Dynamically register merchant in Supabase for risk precheck
+            # Dynamically register new external merchant as UNVERIFIED
             import uuid
             new_id = str(uuid.uuid4())
             new_merchant = {
@@ -65,14 +66,16 @@ async def lookup_merchant(
                 "business_name": upi_name,
                 "business_category": category,
                 "risk_profile": {
-                    "baseline_safety": "verified_upi",
-                    "source": "live_qr_scan",
+                    "baseline_safety": "unverified_upi",
+                    "is_verified": False,
+                    "source": "external_qr_scan",
                     "vpa": pa,
                 }
             }
             ins_res = supabase.table("merchants").insert(new_merchant).execute()
             created_data = ins_res.data[0] if (ins_res.data and isinstance(ins_res.data, list)) else (ins_res.data or new_merchant)
             created_data["upi_id"] = pa
+            created_data["is_verified"] = False
             return MerchantResponse(**created_data)
         except Exception:
             pass
@@ -88,6 +91,7 @@ async def lookup_merchant(
             if m_res.data:
                 res = dict(m_res.data)
                 res["phone"] = matched_user.get("phone")
+                res["is_verified"] = True
                 return MerchantResponse(**res)
 
     # 3. Search merchants table by business_name (ILIKE)
@@ -97,6 +101,7 @@ async def lookup_merchant(
         u_res = supabase.table("users").select("phone").eq("id", m.get("user_id")).maybe_single().execute()
         if u_res.data:
             m["phone"] = u_res.data.get("phone")
+        m["is_verified"] = True
         return MerchantResponse(**m)
 
     # 4. Handle standalone UPI handle (e.g. name@okhdfcbank)
@@ -108,11 +113,12 @@ async def lookup_merchant(
             "user_id": "d83675e1-4899-4671-81a2-c76e921cb9c8",
             "business_name": clean_name,
             "business_category": "Retail & Services",
-            "risk_profile": {"vpa": search_term, "baseline_safety": "verified_upi"}
+            "risk_profile": {"vpa": search_term, "is_verified": False, "baseline_safety": "unverified_upi"}
         }
         ins_res = supabase.table("merchants").insert(new_merchant).execute()
         created_data = ins_res.data[0] if (ins_res.data and isinstance(ins_res.data, list)) else (ins_res.data or new_merchant)
         created_data["upi_id"] = search_term
+        created_data["is_verified"] = False
         return MerchantResponse(**created_data)
 
     return None
@@ -122,7 +128,12 @@ async def lookup_merchant(
 async def list_merchants(user_id: str = Depends(get_current_user_id)):
     supabase = get_supabase_admin()
     result = supabase.table("merchants").select("*").order("business_name").execute()
-    return [MerchantResponse(**m) for m in (result.data or [])]
+    merchants = []
+    for m in (result.data or []):
+        item = dict(m)
+        item["is_verified"] = item.get("risk_profile", {}).get("is_verified", True)
+        merchants.append(MerchantResponse(**item))
+    return merchants
 
 
 @router.get("/{merchant_id}", response_model=MerchantResponse)
@@ -134,4 +145,6 @@ async def get_merchant(
     result = supabase.table("merchants").select("*").eq("id", merchant_id).single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Merchant not found")
-    return MerchantResponse(**result.data)
+    res = dict(result.data)
+    res["is_verified"] = res.get("risk_profile", {}).get("is_verified", True)
+    return MerchantResponse(**res)

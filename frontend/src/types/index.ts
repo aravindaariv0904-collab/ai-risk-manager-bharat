@@ -22,6 +22,7 @@ export interface Merchant {
   business_category: string | null
   phone?: string | null
   upi_id?: string | null
+  is_verified?: boolean
   risk_profile: Record<string, unknown>
   created_at: string
 }

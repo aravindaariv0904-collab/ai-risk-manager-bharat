@@ -218,6 +218,7 @@ class MerchantResponse(BaseModel):
     business_category: Optional[str] = None
     phone: Optional[str] = None
     upi_id: Optional[str] = None
+    is_verified: bool = False
     risk_profile: Optional[Dict] = None
     created_at: Optional[datetime] = None
 
