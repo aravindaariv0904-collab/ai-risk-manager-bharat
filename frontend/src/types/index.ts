@@ -20,6 +20,8 @@ export interface Merchant {
   user_id: string
   business_name: string
   business_category: string | null
+  phone?: string | null
+  upi_id?: string | null
   risk_profile: Record<string, unknown>
   created_at: string
 }

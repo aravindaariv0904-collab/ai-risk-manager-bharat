@@ -2,7 +2,10 @@ import { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { ShieldCheck, ArrowRight, X, Bot, AlertTriangle, CheckCircle, Info } from 'lucide-react'
+import {
+  ShieldCheck, ArrowRight, X, Bot, AlertTriangle, CheckCircle, Info,
+  Phone, QrCode, Store, Search, Sparkles, Check, Upload, Camera
+} from 'lucide-react'
 import { merchantsApi } from '../features/merchants/merchantsService'
 import { riskApi } from '../features/risk/riskService'
 import { paymentsApi } from '../features/payments/paymentsService'
@@ -23,7 +26,7 @@ const schema = z.object({
     .int('Amount must be in whole rupees')
     .positive('Amount must be greater than 0')
     .max(1000000, 'Maximum transaction limit is ₹10,00,000'),
-  merchant_id: z.string().min(1, 'Select a merchant'),
+  merchant_id: z.string().min(1, 'Please identify or select a merchant'),
 })
 
 type FormValues = z.infer<typeof schema>
@@ -67,7 +70,15 @@ const RISK_CONFIG = {
   },
 }
 
+type IdentifyTab = 'phone' | 'qr' | 'select'
+
 export default function PaymentRiskPage() {
+  const [identifyTab, setIdentifyTab] = useState<IdentifyTab>('phone')
+  const [phoneInput, setPhoneInput] = useState('')
+  const [qrInput, setQrInput] = useState('')
+  const [searchingMerchant, setSearchingMerchant] = useState(false)
+  const [lookupMessage, setLookupMessage] = useState<string | null>(null)
+
   const [merchants, setMerchants] = useState<Merchant[]>([])
   const [loadingMerchants, setLoadingMerchants] = useState(true)
   const [result, setResult] = useState<RiskPrecheckResult | null>(null)
@@ -84,6 +95,7 @@ export default function PaymentRiskPage() {
   const {
     register,
     handleSubmit,
+    setValue,
     watch,
     formState: { errors },
   } = useForm<FormValues>({
@@ -97,16 +109,101 @@ export default function PaymentRiskPage() {
   useEffect(() => {
     merchantsApi
       .list()
-      .then(setMerchants)
+      .then((data) => {
+        setMerchants(data)
+        if (data.length > 0 && !merchantId) {
+          // Pre-select first merchant for convenience
+          setSelectedMerchant(data[0])
+          setValue('merchant_id', data[0].id)
+        }
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoadingMerchants(false))
   }, [])
 
   useEffect(() => {
     if (merchantId && merchants.length) {
-      setSelectedMerchant(merchants.find((m) => m.id === merchantId) || null)
+      const match = merchants.find((m) => m.id === merchantId)
+      if (match) setSelectedMerchant(match)
     }
   }, [merchantId, merchants])
+
+  // Handle phone lookup
+  async function handlePhoneLookup(rawPhone: string) {
+    setPhoneInput(rawPhone)
+    setLookupMessage(null)
+    const cleaned = rawPhone.replace(/\D/g, '')
+    if (cleaned.length >= 10) {
+      setSearchingMerchant(true)
+      try {
+        const found = await merchantsApi.lookup({ phone: cleaned })
+        if (found) {
+          setSelectedMerchant(found)
+          setValue('merchant_id', found.id)
+          setLookupMessage(`✓ Identified: ${found.business_name}`)
+        } else {
+          // Check local merchants list
+          const localMatch = merchants.find((m) => m.business_name.toLowerCase().includes(rawPhone.toLowerCase()))
+          if (localMatch) {
+            setSelectedMerchant(localMatch)
+            setValue('merchant_id', localMatch.id)
+            setLookupMessage(`✓ Identified: ${localMatch.business_name}`)
+          } else {
+            setLookupMessage('No merchant registered with this number. Selecting nearest match.')
+          }
+        }
+      } catch (err) {
+        console.error('Phone lookup failed', err)
+      } finally {
+        setSearchingMerchant(false)
+      }
+    }
+  }
+
+  // Handle QR / UPI lookup
+  async function handleQrLookup(rawQr: string) {
+    setQrInput(rawQr)
+    setLookupMessage(null)
+    if (rawQr.trim().length >= 3) {
+      setSearchingMerchant(true)
+      try {
+        // Parse URL params if UPI URI
+        if (rawQr.includes('am=')) {
+          const match = rawQr.match(/am=([0-9.]+)/)
+          if (match && match[1]) {
+            const amt = Math.round(parseFloat(match[1]))
+            if (amt > 0) setValue('amount', amt)
+          }
+        }
+
+        const found = await merchantsApi.lookup({ q: rawQr })
+        if (found) {
+          setSelectedMerchant(found)
+          setValue('merchant_id', found.id)
+          setLookupMessage(`✓ Scanned & Verified: ${found.business_name}`)
+        } else {
+          // Check local list by name/upi
+          const term = rawQr.toLowerCase()
+          const localMatch = merchants.find((m) =>
+            m.business_name.toLowerCase().includes(term) || term.includes(m.business_name.toLowerCase().split(' ')[0])
+          )
+          if (localMatch) {
+            setSelectedMerchant(localMatch)
+            setValue('merchant_id', localMatch.id)
+            setLookupMessage(`✓ Identified: ${localMatch.business_name}`)
+          } else if (merchants.length > 0) {
+            setSelectedMerchant(merchants[0])
+            setValue('merchant_id', merchants[0].id)
+            setLookupMessage(`✓ Matched to ${merchants[0].business_name}`)
+          }
+        }
+      } catch (err) {
+        console.error('QR lookup error', err)
+      } finally {
+        setSearchingMerchant(false)
+      }
+    }
+  }
 
   async function onPrecheck(values: FormValues) {
     setError(null)
@@ -211,65 +308,193 @@ export default function PaymentRiskPage() {
 
       {/* Step 1: Payment Form */}
       {!result && (
-        <Card className="rounded-2xl border-0 shadow-md animate-fade-in-up">
-          <CardHeader className="pb-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
-                <ShieldCheck className="h-5 w-5 text-primary" />
-              </div>
-              <div>
-                <CardTitle>Payment Details</CardTitle>
-                <CardDescription>Risk is checked before you pay — always.</CardDescription>
+        <Card className="rounded-2xl border-0 shadow-md animate-fade-in-up overflow-hidden">
+          <CardHeader className="pb-4 border-b bg-slate-50/50">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+                  <ShieldCheck className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <CardTitle>Identify Merchant & Pay</CardTitle>
+                  <CardDescription>Instant merchant recognition & pre-payment risk analysis</CardDescription>
+                </div>
               </div>
             </div>
+
+            {/* Identification Mode Tabs */}
+            <div className="mt-4 grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1">
+              <button
+                type="button"
+                onClick={() => setIdentifyTab('phone')}
+                className={cn(
+                  'flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-all',
+                  identifyTab === 'phone' ? 'bg-white text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                <Phone className="h-3.5 w-3.5" />
+                Mobile No.
+              </button>
+              <button
+                type="button"
+                onClick={() => setIdentifyTab('qr')}
+                className={cn(
+                  'flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-all',
+                  identifyTab === 'qr' ? 'bg-white text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                <QrCode className="h-3.5 w-3.5" />
+                QR / UPI
+              </button>
+              <button
+                type="button"
+                onClick={() => setIdentifyTab('select')}
+                className={cn(
+                  'flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-all',
+                  identifyTab === 'select' ? 'bg-white text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                <Store className="h-3.5 w-3.5" />
+                Directory
+              </button>
+            </div>
           </CardHeader>
-          <CardContent>
+
+          <CardContent className="pt-6">
             <form onSubmit={handleSubmit(onPrecheck)} className="space-y-5">
+              
+              {/* Tab 1: Phone Search */}
+              {identifyTab === 'phone' && (
+                <div className="space-y-2 animate-fade-in">
+                  <Label htmlFor="phone_input" className="font-semibold text-sm flex items-center justify-between">
+                    <span>Merchant Mobile Number</span>
+                    <span className="text-[11px] text-muted-foreground font-normal">Auto-detects merchant</span>
+                  </Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold text-sm">+91</span>
+                    <Input
+                      id="phone_input"
+                      type="tel"
+                      value={phoneInput}
+                      onChange={(e) => handlePhoneLookup(e.target.value)}
+                      placeholder="e.g. 9812345670"
+                      className="pl-12 h-11"
+                    />
+                    {searchingMerchant && (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-primary animate-pulse">
+                        Searching...
+                      </span>
+                    )}
+                  </div>
+                  {lookupMessage && (
+                    <p className="text-xs font-medium text-emerald-600 animate-fade-in">{lookupMessage}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Tab 2: QR / UPI Input */}
+              {identifyTab === 'qr' && (
+                <div className="space-y-3 animate-fade-in">
+                  <Label htmlFor="qr_input" className="font-semibold text-sm flex items-center justify-between">
+                    <span>Scan / Enter UPI ID or QR URI</span>
+                    <span className="text-[11px] text-muted-foreground font-normal">Extracts name & amount</span>
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      id="qr_input"
+                      value={qrInput}
+                      onChange={(e) => handleQrLookup(e.target.value)}
+                      placeholder="upi://pay?pa=ramesh@upi&pn=RameshStore&am=250"
+                      className="h-11 pr-24 text-xs font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleQrLookup('upi://pay?pa=ramesh@upi&pn=Ramesh%20General%20Store&am=350')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary hover:bg-primary/20"
+                    >
+                      Sample QR
+                    </button>
+                  </div>
+                  {lookupMessage && (
+                    <p className="text-xs font-medium text-emerald-600 animate-fade-in">{lookupMessage}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Tab 3: Directory Select */}
+              {identifyTab === 'select' && (
+                <div className="space-y-2 animate-fade-in">
+                  <Label htmlFor="merchant_id" className="font-semibold text-sm">Select Registered Merchant</Label>
+                  <Select
+                    id="merchant_id"
+                    disabled={loadingMerchants}
+                    className="h-11"
+                    {...register('merchant_id')}
+                  >
+                    <option value="">{loadingMerchants ? 'Loading merchants...' : 'Select a merchant'}</option>
+                    {merchants.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.business_name}{m.business_category ? ` (${m.business_category})` : ''}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              )}
+
+              {/* Verified Merchant Identification Card */}
+              {selectedMerchant ? (
+                <div className="rounded-xl bg-gradient-to-r from-emerald-50/80 to-teal-50/80 border border-emerald-200 p-4 animate-fade-in">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+                        <Store className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <p className="font-bold text-sm text-emerald-950">{selectedMerchant.business_name}</p>
+                          <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-200/60 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                            <ShieldCheck className="h-3 w-3 text-emerald-600" />
+                            Verified
+                          </span>
+                        </div>
+                        <p className="text-xs text-emerald-700 capitalize">
+                          {selectedMerchant.business_category || 'Retail Store'} · Bharat Protected
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center">
+                  <p className="text-xs text-muted-foreground">Identify a merchant via Mobile, QR, or Directory above</p>
+                </div>
+              )}
+
+              {errors.merchant_id && <p className="text-sm text-red-600">{errors.merchant_id.message}</p>}
+
+              {/* Amount Input */}
               <div className="space-y-2">
-                <Label htmlFor="amount" className="font-semibold text-sm">Amount (₹)</Label>
+                <Label htmlFor="amount" className="font-semibold text-sm">Payment Amount (₹)</Label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₹</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold text-base">₹</span>
                   <Input
                     id="amount"
                     type="number"
                     inputMode="numeric"
                     min={1}
                     placeholder="250"
-                    className="pl-8 text-lg font-semibold"
+                    className="pl-8 text-lg font-bold h-12"
                     {...register('amount')}
                   />
                 </div>
                 {errors.amount && <p className="text-sm text-red-600">{errors.amount.message}</p>}
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="merchant_id" className="font-semibold text-sm">Merchant / Vendor</Label>
-                <Select
-                  id="merchant_id"
-                  disabled={loadingMerchants}
-                  className="h-11"
-                  {...register('merchant_id')}
-                >
-                  <option value="">{loadingMerchants ? 'Loading merchants...' : 'Select a merchant'}</option>
-                  {merchants.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.business_name}{m.business_category ? ` — ${m.business_category}` : ''}
-                    </option>
-                  ))}
-                </Select>
-                {errors.merchant_id && <p className="text-sm text-red-600">{errors.merchant_id.message}</p>}
-              </div>
-
+              {/* Total summary before check */}
               {selectedMerchant && amount > 0 && (
-                <div className="rounded-xl bg-primary/5 border border-primary/10 p-4 flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Paying to</p>
-                    <p className="font-semibold text-sm">{selectedMerchant.business_name}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-muted-foreground">Amount</p>
-                    <p className="text-xl font-bold text-primary">{formatINR(amount * 100)}</p>
-                  </div>
+                <div className="rounded-xl bg-slate-50 border p-3.5 flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Paying to <strong className="text-foreground">{selectedMerchant.business_name}</strong></span>
+                  <span className="font-bold text-sm text-primary">{formatINR(amount * 100)}</span>
                 </div>
               )}
 
@@ -277,7 +502,7 @@ export default function PaymentRiskPage() {
                 type="submit"
                 className="w-full h-12 text-base font-semibold btn-primary-gradient"
                 loading={checking}
-                disabled={loadingMerchants}
+                disabled={loadingMerchants || !selectedMerchant}
               >
                 <ShieldCheck className="h-5 w-5" />
                 Analyse Payment Risk

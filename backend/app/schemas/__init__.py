@@ -216,6 +216,8 @@ class MerchantResponse(BaseModel):
     user_id: Optional[str] = None
     business_name: Optional[str] = None
     business_category: Optional[str] = None
+    phone: Optional[str] = None
+    upi_id: Optional[str] = None
     risk_profile: Optional[Dict] = None
     created_at: Optional[datetime] = None
 
