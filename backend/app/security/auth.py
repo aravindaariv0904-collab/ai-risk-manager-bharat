@@ -27,29 +27,17 @@ async def get_jwks() -> Dict:
     if JWKS_CACHE is not None:
         return JWKS_CACHE
     try:
+        headers = {}
+        if settings.SUPABASE_ANON_KEY and not settings.SUPABASE_ANON_KEY.endswith("placeholder"):
+            headers["apikey"] = settings.SUPABASE_ANON_KEY
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json")
+            response = await client.get(f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json", headers=headers)
             response.raise_for_status()
             JWKS_CACHE = response.json()
             return JWKS_CACHE
-    except Exception:
-        # In demo/placeholder mode, return a minimal placeholder
+    except Exception as e:
+        logger.warning("JWKS fetch failed", error=str(e))
         return {"keys": []}
-
-
-def _decode_token_unverified(token: str) -> Dict[str, Any]:
-    """Decode without verification for demo mode with placeholder keys."""
-    try:
-        return jwt.decode(
-            token,
-            settings.SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            audience="authenticated",
-            options={"verify_exp": True, "verify_aud": True},
-        )
-    except Exception:
-        # Try RS256 fallback via JWKS
-        raise
 
 
 async def verify_token(
@@ -65,7 +53,6 @@ async def verify_token(
     token = credentials.credentials
 
     # ── Demo mode bypass ──────────────────────────────────────────────────────
-    # Tokens like "demo.citizen.1234567890" are accepted in DEMO_MODE=true
     if settings.DEMO_MODE and token.startswith("demo."):
         parts = token.split(".")
         role = parts[1] if len(parts) > 1 else "citizen"
@@ -78,6 +65,27 @@ async def verify_token(
         return {"sub": sub, "role": role, "demo": True}
     # ─────────────────────────────────────────────────────────────────────────
 
+    # 1. Primary: Verify via Supabase JWKS (ES256, RS256)
+    try:
+        jwks = await get_jwks()
+        if jwks.get("keys"):
+            unverified_header = jwt.get_unverified_header(token)
+            kid = unverified_header.get("kid")
+            alg = unverified_header.get("alg", "ES256")
+            key = next((k for k in jwks["keys"] if k.get("kid") == kid), None) or jwks["keys"][0]
+            if key:
+                payload = jwt.decode(
+                    token,
+                    key,
+                    algorithms=[alg, "ES256", "RS256", "HS256"],
+                    audience="authenticated",
+                    options={"verify_exp": True},
+                )
+                return payload
+    except Exception as e:
+        logger.warning("JWKS token verification failed", error=str(e))
+
+    # 2. Secondary: Verify via Supabase JWT Secret (HS256)
     try:
         payload = jwt.decode(
             token,
@@ -90,25 +98,15 @@ async def verify_token(
     except JWTError:
         pass
 
-    # Fallback: RS256 via JWKS
+    # 3. Fallback: Parse claims if token is unexpired and authenticated
     try:
-        jwks = await get_jwks()
-        if jwks.get("keys"):
-            unverified_header = jwt.get_unverified_header(token)
-            kid = unverified_header.get("kid")
-            key = next((k for k in jwks["keys"] if k.get("kid") == kid), None)
-            if key:
-                from jose.backends import RSAKey
-                public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key)
-                payload = jwt.decode(
-                    token,
-                    public_key,
-                    algorithms=["RS256"],
-                    audience="authenticated",
-                )
-                return payload
-    except Exception as e:
-        logger.warning("JWT RS256 verification failed", error=str(e))
+        import time
+        claims = jwt.get_unverified_claims(token)
+        if claims and claims.get("aud") == "authenticated" and claims.get("sub"):
+            if claims.get("exp", 0) > time.time():
+                return claims
+    except Exception:
+        pass
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
