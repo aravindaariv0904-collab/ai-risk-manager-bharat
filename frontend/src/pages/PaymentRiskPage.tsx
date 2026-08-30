@@ -120,21 +120,24 @@ export default function PaymentRiskPage() {
       .list()
       .then((data) => {
         setMerchants(data)
-        if (data.length > 0 && !merchantId) {
-          setSelectedMerchant(data[0])
-          setValue('merchant_id', data[0].id)
-        }
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoadingMerchants(false))
   }, [])
 
-  useEffect(() => {
-    if (merchantId && merchants.length) {
-      const match = merchants.find((m) => m.id === merchantId)
-      if (match) setSelectedMerchant(match)
+  // When switching tabs, update selection cleanly
+  function handleTabChange(tab: IdentifyTab) {
+    setIdentifyTab(tab)
+    setLookupMessage(null)
+    if (tab === 'select' && merchants.length > 0 && !selectedMerchant) {
+      setSelectedMerchant(merchants[0])
+      setValue('merchant_id', merchants[0].id)
+    } else if (tab === 'qr' && qrInput) {
+      handleQrLookup(qrInput)
+    } else if (tab === 'phone' && phoneInput) {
+      handlePhoneLookup(phoneInput)
     }
-  }, [merchantId, merchants])
+  }
 
   // Camera cleanup on unmount or tab switch
   useEffect(() => {
@@ -472,7 +475,7 @@ export default function PaymentRiskPage() {
             <div className="mt-4 grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1">
               <button
                 type="button"
-                onClick={() => setIdentifyTab('phone')}
+                onClick={() => handleTabChange('phone')}
                 className={cn(
                   'flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-all',
                   identifyTab === 'phone' ? 'bg-white text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'
@@ -483,7 +486,7 @@ export default function PaymentRiskPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setIdentifyTab('qr')}
+                onClick={() => handleTabChange('qr')}
                 className={cn(
                   'flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-all',
                   identifyTab === 'qr' ? 'bg-white text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'
@@ -494,7 +497,7 @@ export default function PaymentRiskPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setIdentifyTab('select')}
+                onClick={() => handleTabChange('select')}
                 className={cn(
                   'flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-all',
                   identifyTab === 'select' ? 'bg-white text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'
