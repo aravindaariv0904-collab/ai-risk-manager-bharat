@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { createBrowserRouter, RouterProvider } from 'react-router-dom'
+import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom'
 import './index.css'
 
 import App from './App'
@@ -26,6 +26,7 @@ const router = createBrowserRouter([
     element: <App />,
     children: [
       { index: true, element: <ProtectedRoute><CitizenDashboard /></ProtectedRoute> },
+      { path: 'dashboard', element: <Navigate to="/" replace /> },
       { path: 'pay', element: <ProtectedRoute><PaymentRiskPage /></ProtectedRoute> },
       { path: 'history', element: <ProtectedRoute><TransactionsPage /></ProtectedRoute> },
       { path: 'assistant', element: <ProtectedRoute><AssistantPage /></ProtectedRoute> },
@@ -34,7 +35,12 @@ const router = createBrowserRouter([
       { path: 'vendor/transactions', element: <ProtectedRoute><VendorTransactions /></ProtectedRoute> },
       { path: 'admin', element: <ProtectedRoute><AdminDashboard /></ProtectedRoute> },
       { path: 'settings', element: <ProtectedRoute><SettingsPage /></ProtectedRoute> },
+      { path: '*', element: <Navigate to="/" replace /> },
     ],
+  },
+  {
+    path: '*',
+    element: <Navigate to="/" replace />,
   },
 ])
 
