@@ -159,14 +159,22 @@ async def lookup_merchant(
                 "baseline_safety": "unverified_mobile_transfer"
             }
         }
-        return MerchantResponse(
-            id=unverified_merchant["id"],
-            business_name=unverified_merchant["business_name"],
-            business_category="Unregistered Contact",
-            phone=f"+91 {phone_10}",
-            upi_id=f"{phone_10}@upi",
-            is_verified=False,
-        )
+        try:
+            ins_res = supabase.table("merchants").insert(unverified_merchant).execute()
+            created_data = ins_res.data[0] if (ins_res.data and isinstance(ins_res.data, list)) else (ins_res.data or unverified_merchant)
+            created_data["phone"] = f"+91 {phone_10}"
+            created_data["upi_id"] = f"{phone_10}@upi"
+            created_data["is_verified"] = False
+            return MerchantResponse(**created_data)
+        except Exception:
+            return MerchantResponse(
+                id=unverified_merchant["id"],
+                business_name=unverified_merchant["business_name"],
+                business_category="Unregistered Contact",
+                phone=f"+91 {phone_10}",
+                upi_id=f"{phone_10}@upi",
+                is_verified=False,
+            )
 
     # 3. Search merchants table by business_name (ILIKE)
     m_name = supabase.table("merchants").select("*").ilike("business_name", f"%{search_term}%").limit(1).execute()

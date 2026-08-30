@@ -30,7 +30,17 @@ async def risk_precheck(
 
     merchant_resp = supabase.table("merchants").select("id").eq("id", str(request.merchant_id)).maybe_single().execute()
     if not merchant_resp.data:
-        raise HTTPException(status_code=404, detail="Merchant not found")
+        new_m = {
+            "id": str(request.merchant_id),
+            "user_id": None,
+            "business_name": "Unverified Recipient",
+            "business_category": "Direct Transfer",
+            "risk_profile": {"is_verified": False, "baseline_safety": "unverified_mobile_transfer"}
+        }
+        try:
+            supabase.table("merchants").insert(new_m).execute()
+        except Exception:
+            pass
 
     risk_score, risk_level, risk_action, reasons, details = await risk_engine.evaluate(
         payer_id=payer_id,
