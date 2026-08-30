@@ -134,11 +134,21 @@ class BehavioralBaseline:
         median_amount = float(np.median(amounts)) if amounts else 0
         p95_amount = float(np.percentile(amounts, 95)) if amounts else 0
 
-        txn_count_1h = len([t for t in recent_txns if (now - datetime.fromisoformat(t["created_at"].replace("Z", "+00:00"))).total_seconds() < 3600])
-        txn_count_24h = len([t for t in recent_txns if (now - datetime.fromisoformat(t["created_at"].replace("Z", "+00:00"))).total_seconds() < 86400])
-        txn_count_7d = len([t for t in recent_txns if (now - datetime.fromisoformat(t["created_at"].replace("Z", "+00:00"))).total_seconds() < 604800])
+        def parse_dt(val):
+            if isinstance(val, datetime):
+                return val.replace(tzinfo=None) if val.tzinfo else val
+            if isinstance(val, str):
+                try:
+                    return datetime.fromisoformat(val.replace("Z", "+00:00")).replace(tzinfo=None)
+                except Exception:
+                    pass
+            return datetime.utcnow()
 
-        failed_count_24h = len([t for t in recent_txns if t["status"] == "failed" and (now - datetime.fromisoformat(t["created_at"].replace("Z", "+00:00"))).total_seconds() < 86400])
+        txn_count_1h = len([t for t in recent_txns if (now - parse_dt(t.get("created_at"))).total_seconds() < 3600])
+        txn_count_24h = len([t for t in recent_txns if (now - parse_dt(t.get("created_at"))).total_seconds() < 86400])
+        txn_count_7d = len([t for t in recent_txns if (now - parse_dt(t.get("created_at"))).total_seconds() < 604800])
+
+        failed_count_24h = len([t for t in recent_txns if t.get("status") == "failed" and (now - parse_dt(t.get("created_at"))).total_seconds() < 86400])
 
         merchant_amounts = [t["amount"] for t in recent_txns]
         merchant_counts: Dict[str, int] = {}
@@ -148,7 +158,7 @@ class BehavioralBaseline:
                 merchant_counts[mid] = merchant_counts.get(mid, 0) + 1
         frequent_merchants = sorted(merchant_counts, key=merchant_counts.get, reverse=True)[:5]
 
-        hours = [datetime.fromisoformat(t["created_at"].replace("Z", "+00:00")).hour for t in recent_txns]
+        hours = [parse_dt(t.get("created_at")).hour for t in recent_txns]
         hour_counts: Dict[int, int] = {}
         for h in hours:
             hour_counts[h] = hour_counts.get(h, 0) + 1
