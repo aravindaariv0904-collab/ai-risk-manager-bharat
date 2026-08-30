@@ -366,13 +366,13 @@ export default function PaymentRiskPage() {
   }
 
   async function onContinue() {
-    if (!result) return
+    if (!result || !selectedMerchant) return
     setProcessing(true)
     setError(null)
     try {
       const order = await paymentsApi.createOrder({
         amount: amount * 100,
-        merchant_id: result.transaction_id, // use merchant from the precheck context
+        merchant_id: selectedMerchant.id,
       })
       setOrderId(order.order_id)
       setCompleted(true)
