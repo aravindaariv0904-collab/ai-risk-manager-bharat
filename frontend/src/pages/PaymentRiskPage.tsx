@@ -525,29 +525,52 @@ export default function PaymentRiskPage() {
               
               {/* Tab 1: Phone Search */}
               {identifyTab === 'phone' && (
-                <div className="space-y-2 animate-fade-in">
-                  <Label htmlFor="phone_input" className="font-semibold text-sm flex items-center justify-between">
-                    <span>Merchant Mobile Number</span>
-                    <span className="text-[11px] text-muted-foreground font-normal">Auto-detects merchant</span>
-                  </Label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold text-sm">+91</span>
-                    <Input
-                      id="phone_input"
-                      type="tel"
-                      value={phoneInput}
-                      onChange={(e) => handlePhoneLookup(e.target.value)}
-                      placeholder="e.g. 9812345670"
-                      className="pl-12 h-11"
-                    />
-                    {searchingMerchant && (
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-primary animate-pulse">
-                        Searching...
-                      </span>
-                    )}
+                <div className="space-y-3 animate-fade-in">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="phone_input" className="font-semibold text-sm flex items-center justify-between">
+                      <span>Merchant Mobile Number</span>
+                      <span className="text-[11px] text-muted-foreground font-normal">10-digit number</span>
+                    </Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold text-sm">+91</span>
+                      <Input
+                        id="phone_input"
+                        type="tel"
+                        value={phoneInput}
+                        onChange={(e) => handlePhoneLookup(e.target.value)}
+                        placeholder="e.g. 7396660904"
+                        className="pl-12 h-11"
+                      />
+                      {searchingMerchant && (
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-primary animate-pulse">
+                          Searching...
+                        </span>
+                      )}
+                    </div>
                   </div>
+
+                  {/* Recipient Name Confirmation / Custom Input */}
+                  {selectedMerchant && (
+                    <div className="space-y-1.5 animate-fade-in">
+                      <Label htmlFor="recipient_name_input" className="font-semibold text-xs text-muted-foreground flex items-center justify-between">
+                        <span>Recipient / Account Holder Name</span>
+                        <span className="text-[11px] font-normal">Edit or confirm name</span>
+                      </Label>
+                      <Input
+                        id="recipient_name_input"
+                        value={selectedMerchant.business_name}
+                        onChange={(e) => {
+                          const newName = e.target.value
+                          setSelectedMerchant((prev) => (prev ? { ...prev, business_name: newName } : null))
+                        }}
+                        placeholder="e.g. Ramesh Kumar"
+                        className="h-10 text-xs font-semibold"
+                      />
+                    </div>
+                  )}
+
                   {lookupMessage && (
-                    <p className="text-xs font-medium text-emerald-600 animate-fade-in">{lookupMessage}</p>
+                    <p className="text-xs font-medium text-amber-600 animate-fade-in">{lookupMessage}</p>
                   )}
                 </div>
               )}
