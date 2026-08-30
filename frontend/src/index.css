@@ -1,0 +1,275 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   AI Risk Manager for Bharat — Premium Design System
+   UI UX PRO MAX | Glassmorphism | Micro-animations | Dark-ready
+   ============================================================ */
+
+@layer base {
+  :root {
+    /* Brand palette — Deep Navy + Electric Blue + Saffron accents */
+    --background: 220 20% 97%;
+    --foreground: 222 47% 8%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 8%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 8%;
+
+    /* Primary: Electric Indigo */
+    --primary: 243 75% 59%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 243 75% 59%;
+
+    /* Secondary: Soft Lavender */
+    --secondary: 240 20% 95%;
+    --secondary-foreground: 222 47% 15%;
+
+    --muted: 220 14% 93%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 240 15% 92%;
+    --accent-foreground: 222 47% 15%;
+
+    /* Semantic colors */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 72% 29%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 10%;
+
+    /* Risk colors */
+    --risk-low: 142 70% 45%;
+    --risk-low-bg: 142 70% 97%;
+    --risk-medium: 38 92% 50%;
+    --risk-medium-bg: 38 92% 96%;
+    --risk-high: 0 84% 60%;
+    --risk-high-bg: 0 84% 97%;
+
+    --border: 220 13% 89%;
+    --input: 220 13% 89%;
+    --ring: 243 75% 59%;
+    --radius: 0.75rem;
+
+    /* Glass effect tokens */
+    --glass-bg: rgba(255, 255, 255, 0.7);
+    --glass-border: rgba(255, 255, 255, 0.5);
+    --glass-blur: 16px;
+  }
+
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    @apply bg-background text-foreground antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 20% -20%, hsla(243, 75%, 59%, 0.08) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 80% 110%, hsla(243, 75%, 59%, 0.05) 0%, transparent 60%);
+    background-attachment: fixed;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Inter', sans-serif;
+    @apply tracking-tight;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@layer components {
+  /* === Premium Glass Card === */
+  .glass-card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    box-shadow:
+      0 1px 3px rgba(0, 0, 0, 0.04),
+      0 4px 16px rgba(0, 0, 0, 0.06),
+      inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  }
+
+  /* === Premium Gradient Button === */
+  .btn-primary-gradient {
+    background: linear-gradient(135deg, hsl(243, 75%, 59%) 0%, hsl(258, 75%, 65%) 100%);
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+    transition: all 0.2s ease;
+  }
+  .btn-primary-gradient:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.45);
+  }
+  .btn-primary-gradient:active {
+    transform: translateY(0);
+  }
+
+  /* === Risk Score Gauge Container === */
+  .risk-gauge-container {
+    filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.15));
+  }
+
+  /* === Risk Level Pills === */
+  .risk-pill-low {
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold;
+    background: hsl(var(--risk-low-bg));
+    color: hsl(var(--risk-low));
+    border: 1px solid hsla(142, 70%, 45%, 0.2);
+  }
+  .risk-pill-medium {
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold;
+    background: hsl(var(--risk-medium-bg));
+    color: hsl(var(--risk-medium));
+    border: 1px solid hsla(38, 92%, 50%, 0.2);
+  }
+  .risk-pill-high {
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold;
+    background: hsl(var(--risk-high-bg));
+    color: hsl(var(--risk-high));
+    border: 1px solid hsla(0, 84%, 60%, 0.2);
+  }
+
+  /* === Demo Banner === */
+  .demo-banner {
+    background: linear-gradient(90deg, #f59e0b 0%, #f97316 100%);
+    @apply py-2 px-4 text-center text-xs font-semibold text-white tracking-wide;
+  }
+
+  /* === Premium Nav === */
+  .nav-glass {
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.04);
+  }
+
+  /* === Stat Cards === */
+  .stat-card {
+    @apply relative overflow-hidden rounded-2xl p-6;
+    background: white;
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.04);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.08);
+  }
+  .stat-card::before {
+    content: '';
+    @apply absolute top-0 left-0 right-0 h-1 rounded-t-2xl;
+  }
+  .stat-card-blue::before { background: linear-gradient(90deg, #6366f1, #8b5cf6); }
+  .stat-card-green::before { background: linear-gradient(90deg, #10b981, #34d399); }
+  .stat-card-amber::before { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+  .stat-card-red::before { background: linear-gradient(90deg, #ef4444, #f87171); }
+
+  /* === Chat Bubbles === */
+  .chat-bubble-ai {
+    @apply rounded-2xl rounded-tl-sm px-4 py-3 text-sm;
+    background: linear-gradient(135deg, #f0f4ff 0%, #e8eeff 100%);
+    border: 1px solid rgba(99, 102, 241, 0.12);
+    color: hsl(222, 47%, 8%);
+  }
+  .chat-bubble-user {
+    @apply rounded-2xl rounded-tr-sm px-4 py-3 text-sm text-white;
+    background: linear-gradient(135deg, hsl(243, 75%, 59%) 0%, hsl(258, 75%, 65%) 100%);
+  }
+
+  /* === Verification Result Cards === */
+  .verify-success {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    border: 1.5px solid rgba(34, 197, 94, 0.3);
+    @apply rounded-2xl p-6;
+  }
+  .verify-fail {
+    background: linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%);
+    border: 1.5px solid rgba(239, 68, 68, 0.3);
+    @apply rounded-2xl p-6;
+  }
+
+  /* === Page Header === */
+  .page-header {
+    @apply relative overflow-hidden rounded-2xl p-8 mb-8;
+    background: linear-gradient(135deg, hsl(243, 75%, 59%) 0%, hsl(258, 80%, 65%) 100%);
+    box-shadow: 0 8px 32px rgba(99, 102, 241, 0.3);
+  }
+  .page-header::before {
+    content: '';
+    @apply absolute inset-0 opacity-30;
+    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.15'%3E%3Ccircle cx='30' cy='30' r='4'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  }
+}
+
+@layer utilities {
+  /* === Animations === */
+  @keyframes fade-in-up {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes pulse-ring {
+    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+    70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
+    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+  }
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  @keyframes risk-fill {
+    from { stroke-dashoffset: 283; }
+    to { stroke-dashoffset: var(--target-dashoffset); }
+  }
+
+  .animate-fade-in-up { animation: fade-in-up 0.4s ease both; }
+  .animate-fade-in { animation: fade-in 0.3s ease both; }
+  .animate-pulse-ring { animation: pulse-ring 2s infinite; }
+  .animate-risk-fill { animation: risk-fill 1s ease-out both; }
+
+  /* Stagger children */
+  .stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger > *:nth-child(2) { animation-delay: 80ms; }
+  .stagger > *:nth-child(3) { animation-delay: 160ms; }
+  .stagger > *:nth-child(4) { animation-delay: 240ms; }
+
+  /* Loading shimmer */
+  .shimmer {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  /* Gradient text */
+  .gradient-text {
+    background: linear-gradient(135deg, hsl(243, 75%, 59%) 0%, hsl(258, 80%, 65%) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Focus ring */
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2;
+  }
+}
