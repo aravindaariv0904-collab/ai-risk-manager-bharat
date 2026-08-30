@@ -27,16 +27,53 @@ async def lookup_merchant(
     if not search_term:
         return None
 
-    # 1. Check if search_term is a UPI QR URI
-    if search_term.startswith("upi://pay?") or "pa=" in search_term:
+    # 1. Process QR URI payload or UPI ID
+    raw = (phone or q or "").strip()
+    if raw.startswith("upi://pay?") or "pa=" in raw:
         try:
-            parsed = urllib.parse.parse_qs(urllib.parse.urlparse(search_term).query)
-            pa = parsed.get("pa", [""])[0]  # UPI ID
-            pn = parsed.get("pn", [""])[0]  # Merchant Name
-            if pa:
-                search_term = pa
-            elif pn:
-                search_term = pn
+            parsed = urllib.parse.parse_qs(urllib.parse.urlparse(raw).query)
+            pa = parsed.get("pa", [""])[0].strip()
+            pn_raw = parsed.get("pn", [""])[0]
+            pn = urllib.parse.unquote(pn_raw).strip().strip("'\"")
+            mc = parsed.get("mc", [None])[0]
+
+            upi_name = pn or (pa.split("@")[0].title() if "@" in pa else "UPI Merchant")
+
+            mcc_map = {
+                "5411": "Grocery & Supermarket",
+                "5812": "Restaurants & Dining",
+                "5814": "Fast Food & Tea",
+                "5651": "Clothing & Apparel",
+                "5912": "Pharmacy & Healthcare",
+                "5311": "Department Store",
+            }
+            category = mcc_map.get(mc, "Retail & Services")
+
+            # Check if this merchant already exists
+            existing = supabase.table("merchants").select("*").ilike("business_name", f"%{upi_name}%").maybe_single().execute()
+            if existing.data:
+                res = dict(existing.data)
+                res["upi_id"] = pa
+                return MerchantResponse(**res)
+
+            # Dynamically register merchant in Supabase for risk precheck
+            import uuid
+            new_id = str(uuid.uuid4())
+            new_merchant = {
+                "id": new_id,
+                "user_id": "d83675e1-4899-4671-81a2-c76e921cb9c8",
+                "business_name": upi_name,
+                "business_category": category,
+                "risk_profile": {
+                    "baseline_safety": "verified_upi",
+                    "source": "live_qr_scan",
+                    "vpa": pa,
+                }
+            }
+            ins_res = supabase.table("merchants").insert(new_merchant).execute()
+            created_data = ins_res.data[0] if (ins_res.data and isinstance(ins_res.data, list)) else (ins_res.data or new_merchant)
+            created_data["upi_id"] = pa
+            return MerchantResponse(**created_data)
         except Exception:
             pass
 
@@ -62,63 +99,21 @@ async def lookup_merchant(
             m["phone"] = u_res.data.get("phone")
         return MerchantResponse(**m)
 
-    # 5. Dynamic Auto-Resolution for Real-world PhonePe / GPay / Paytm QRs or UPI IDs
-    # If the user scanned or typed a valid UPI ID (e.g. name@okhdfcbank, name@ybl, name@paytm)
-    is_upi_string = "@" in search_term or "pa=" in (phone or q or "")
-    if is_upi_string:
-        upi_name = "UPI Merchant"
-        upi_id_val = search_term
-        mcc_code = None
-
-        raw = phone or q or ""
-        if "pa=" in raw:
-            try:
-                parsed = urllib.parse.parse_qs(urllib.parse.urlparse(raw).query)
-                upi_id_val = parsed.get("pa", [search_term])[0]
-                upi_name = parsed.get("pn", [upi_id_val.split("@")[0]])[0]
-                mcc_code = parsed.get("mc", [None])[0]
-            except Exception:
-                pass
-        elif "@" in search_term:
-            upi_name = search_term.split("@")[0].replace(".", " ").replace("_", " ").title()
-
-        # Map MCC code to category if present
-        mcc_map = {
-            "5411": "Grocery & Supermarket",
-            "5812": "Restaurants & Dining",
-            "5814": "Fast Food & Tea",
-            "5651": "Clothing & Apparel",
-            "5912": "Pharmacy & Healthcare",
-            "5311": "Department Store",
+    # 4. Handle standalone UPI handle (e.g. name@okhdfcbank)
+    if "@" in search_term:
+        clean_name = search_term.split("@")[0].replace(".", " ").replace("_", " ").title()
+        import uuid
+        new_merchant = {
+            "id": str(uuid.uuid4()),
+            "user_id": "d83675e1-4899-4671-81a2-c76e921cb9c8",
+            "business_name": clean_name,
+            "business_category": "Retail & Services",
+            "risk_profile": {"vpa": search_term, "baseline_safety": "verified_upi"}
         }
-        category = mcc_map.get(mcc_code, "Retail & Services")
-
-        # Auto-create or find dynamically in database
-        try:
-            # Check if exists by upi name
-            existing = supabase.table("merchants").select("*").ilike("business_name", f"%{upi_name}%").maybe_single().execute()
-            if existing.data:
-                return MerchantResponse(**existing.data)
-
-            # Create on-the-fly for real-time risk assessment
-            import uuid
-            new_merchant = {
-                "id": str(uuid.uuid4()),
-                "user_id": "d83675e1-4899-4671-81a2-c76e921cb9c8", # Link to system user profile
-                "business_name": upi_name,
-                "business_category": category,
-                "risk_profile": {
-                    "baseline_safety": "verified_upi",
-                    "source": "live_qr_scan",
-                    "vpa": upi_id_val,
-                }
-            }
-            ins_res = supabase.table("merchants").insert(new_merchant).execute()
-            if ins_res.data:
-                created = ins_res.data if isinstance(ins_res.data, dict) else (ins_res.data[0] if ins_res.data else new_merchant)
-                return MerchantResponse(**created)
-        except Exception:
-            pass
+        ins_res = supabase.table("merchants").insert(new_merchant).execute()
+        created_data = ins_res.data[0] if (ins_res.data and isinstance(ins_res.data, list)) else (ins_res.data or new_merchant)
+        created_data["upi_id"] = search_term
+        return MerchantResponse(**created_data)
 
     return None
 

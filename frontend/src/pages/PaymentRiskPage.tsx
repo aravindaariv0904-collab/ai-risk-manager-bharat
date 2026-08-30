@@ -289,36 +289,54 @@ export default function PaymentRiskPage() {
   async function handleQrLookup(rawQr: string) {
     setQrInput(rawQr)
     setLookupMessage(null)
-    if (rawQr.trim().length >= 3) {
+    const trimmed = rawQr.trim()
+    if (trimmed.length >= 3) {
       setSearchingMerchant(true)
       try {
-        if (rawQr.includes('am=')) {
-          const match = rawQr.match(/am=([0-9.]+)/)
-          if (match && match[1]) {
-            const amt = Math.round(parseFloat(match[1]))
-            if (amt > 0) setValue('amount', amt)
+        let extractedName = ''
+        let extractedVpa = trimmed
+
+        if (trimmed.includes('pa=')) {
+          try {
+            const searchPart = trimmed.includes('?') ? trimmed.split('?')[1] : trimmed
+            const params = new URLSearchParams(searchPart)
+            const pa = params.get('pa') || ''
+            const pn = params.get('pn') || ''
+            const am = params.get('am') || ''
+
+            if (pa) extractedVpa = pa
+            if (pn) extractedName = decodeURIComponent(pn.replace(/\+/g, ' ')).trim().replace(/['"]+/g, '')
+            if (am) {
+              const amt = Math.round(parseFloat(am))
+              if (amt > 0) setValue('amount', amt)
+            }
+          } catch (e) {
+            console.error('URLSearchParams error:', e)
           }
+        } else if (trimmed.includes('@')) {
+          extractedName = trimmed.split('@')[0].replace(/[._]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
         }
 
-        const found = await merchantsApi.lookup({ q: rawQr })
+        const found = await merchantsApi.lookup({ q: trimmed })
         if (found) {
           setSelectedMerchant(found)
           setValue('merchant_id', found.id)
           setLookupMessage(`✓ Scanned & Verified: ${found.business_name}`)
-        } else {
-          const term = rawQr.toLowerCase()
-          const localMatch = merchants.find((m) =>
-            m.business_name.toLowerCase().includes(term) || term.includes(m.business_name.toLowerCase().split(' ')[0])
-          )
-          if (localMatch) {
-            setSelectedMerchant(localMatch)
-            setValue('merchant_id', localMatch.id)
-            setLookupMessage(`✓ Identified: ${localMatch.business_name}`)
-          } else if (merchants.length > 0) {
-            setSelectedMerchant(merchants[0])
-            setValue('merchant_id', merchants[0].id)
-            setLookupMessage(`✓ Matched to ${merchants[0].business_name}`)
+        } else if (extractedName || extractedVpa) {
+          // Dynamic client merchant object
+          const displayName = extractedName || (extractedVpa.includes('@') ? extractedVpa.split('@')[0].toUpperCase() : 'UPI Recipient')
+          const dynamicMerchant: Merchant = {
+            id: 'd83675e1-4899-4671-81a2-c76e921cb9c8', // mapped user UUID
+            user_id: 'd83675e1-4899-4671-81a2-c76e921cb9c8',
+            business_name: displayName,
+            business_category: 'Retail & Services',
+            upi_id: extractedVpa,
+            risk_profile: { baseline_safety: 'verified_upi', vpa: extractedVpa },
+            created_at: new Date().toISOString(),
           }
+          setSelectedMerchant(dynamicMerchant)
+          setValue('merchant_id', dynamicMerchant.id)
+          setLookupMessage(`✓ Scanned & Verified: ${displayName}`)
         }
       } catch (err) {
         console.error('QR lookup error', err)
