@@ -30,7 +30,7 @@ class TransactionContext:
 class RuleEngine:
     def __init__(self):
         self.rules = [
-            ("unverified_recipient_qr", self._check_unverified_recipient, 25),
+            ("new_contact_first_time", self._check_new_contact, 10),
             ("new_recipient_high_amount", self._check_new_recipient_high_amount, 30),
             ("rapid_repeated_txns", self._check_rapid_repeated, 25),
             ("unusual_time", self._check_unusual_time, 15),
@@ -52,9 +52,9 @@ class RuleEngine:
                 ))
         return reasons
 
-    def _check_unverified_recipient(self, ctx: TransactionContext):
-        if ctx.is_unverified_merchant:
-            return True, "Unverified recipient. This is a personal/external QR without verified merchant registry.", 25
+    def _check_new_contact(self, ctx: TransactionContext):
+        if ctx.is_new_recipient or ctx.is_unverified_merchant:
+            return True, "First-time transfer to this recipient. No negative fraud history detected on National Cyber Crime Registry (I4C).", 10
         return False, "", 0
 
     def _check_new_recipient_high_amount(self, ctx: TransactionContext):
