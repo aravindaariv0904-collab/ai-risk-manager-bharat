@@ -108,41 +108,65 @@ async def lookup_merchant(
                 res["is_verified"] = prof.get("is_verified", True)
                 return MerchantResponse(**res)
 
-        # Perform Live NPCI Bank Directory & Penny Drop KYC Lookup
+        # Perform Live NPCI Bank Directory / Registry Lookup
         from app.services.npci_directory import npci_directory
-        npci_res = npci_directory.resolve_phone(phone_10)
+        npci_res = await npci_directory.resolve_phone(phone_10)
 
+        if npci_res:
+            import uuid
+            new_merchant = {
+                "id": str(uuid.uuid4()),
+                "user_id": None,
+                "business_name": npci_res["name"],
+                "business_category": f"Verified Account ({npci_res.get('bank', 'Banking Network')})",
+                "risk_profile": {
+                    "vpa": npci_res["vpa"],
+                    "phone": phone_10,
+                    "bank": npci_res.get("bank"),
+                    "kyc_status": npci_res.get("kyc_status", "VERIFIED_FULL_KYC"),
+                    "is_verified": True,
+                    "baseline_safety": "npci_verified_bank_kyc"
+                }
+            }
+            try:
+                ins_res = supabase.table("merchants").insert(new_merchant).execute()
+                created_data = ins_res.data[0] if (ins_res.data and isinstance(ins_res.data, list)) else (ins_res.data or new_merchant)
+                created_data["phone"] = f"+91 {phone_10}"
+                created_data["upi_id"] = npci_res["vpa"]
+                created_data["is_verified"] = True
+                return MerchantResponse(**created_data)
+            except Exception:
+                return MerchantResponse(
+                    id=new_merchant["id"],
+                    business_name=new_merchant["business_name"],
+                    business_category=new_merchant["business_category"],
+                    phone=f"+91 {phone_10}",
+                    upi_id=npci_res["vpa"],
+                    is_verified=True,
+                )
+
+        # If completely unknown number without live banking key or QR scan
         import uuid
-        new_merchant = {
+        unverified_merchant = {
             "id": str(uuid.uuid4()),
             "user_id": None,
-            "business_name": npci_res["name"] if npci_res else f"Recipient (+91 {phone_10})",
-            "business_category": f"Individual Account ({npci_res['bank']})" if npci_res else "Individual Transfer",
+            "business_name": f"Recipient (+91 {phone_10})",
+            "business_category": "Unregistered Contact",
             "risk_profile": {
-                "vpa": npci_res["vpa"] if npci_res else f"{phone_10}@upi",
+                "vpa": f"{phone_10}@upi",
                 "phone": phone_10,
-                "bank": npci_res["bank"] if npci_res else "Indian Banking Network",
-                "kyc_status": npci_res["kyc_status"] if npci_res else "VERIFIED_FULL_KYC",
-                "is_verified": True,
-                "baseline_safety": "npci_verified_bank_kyc"
+                "is_verified": False,
+                "baseline_safety": "unverified_mobile_transfer"
             }
         }
-        try:
-            ins_res = supabase.table("merchants").insert(new_merchant).execute()
-            created_data = ins_res.data[0] if (ins_res.data and isinstance(ins_res.data, list)) else (ins_res.data or new_merchant)
-            created_data["phone"] = f"+91 {phone_10}"
-            created_data["upi_id"] = npci_res["vpa"] if npci_res else f"{phone_10}@upi"
-            created_data["is_verified"] = True
-            return MerchantResponse(**created_data)
-        except Exception:
-            return MerchantResponse(
-                id=new_merchant["id"],
-                business_name=new_merchant["business_name"],
-                business_category=new_merchant["business_category"],
-                phone=f"+91 {phone_10}",
-                upi_id=npci_res["vpa"] if npci_res else f"{phone_10}@upi",
-                is_verified=True,
-            )
+        return MerchantResponse(
+            id=unverified_merchant["id"],
+            business_name=unverified_merchant["business_name"],
+            business_category="Unregistered Contact",
+            phone=f"+91 {phone_10}",
+            upi_id=f"{phone_10}@upi",
+            is_verified=False,
+        )
 
     # 3. Search merchants table by business_name (ILIKE)
     m_name = supabase.table("merchants").select("*").ilike("business_name", f"%{search_term}%").limit(1).execute()
