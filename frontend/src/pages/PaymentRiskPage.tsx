@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
   ShieldCheck, ArrowRight, X, Bot, AlertTriangle, CheckCircle, Info,
-  Phone, QrCode, Store, Search, Sparkles, Check, Upload, Camera
+  Phone, QrCode, Store, Search, Sparkles, Check, Upload, Camera, VideoOff
 } from 'lucide-react'
+import jsQR from 'jsqr'
 import { merchantsApi } from '../features/merchants/merchantsService'
 import { riskApi } from '../features/risk/riskService'
 import { paymentsApi } from '../features/payments/paymentsService'
@@ -73,11 +74,19 @@ const RISK_CONFIG = {
 type IdentifyTab = 'phone' | 'qr' | 'select'
 
 export default function PaymentRiskPage() {
-  const [identifyTab, setIdentifyTab] = useState<IdentifyTab>('phone')
+  const [identifyTab, setIdentifyTab] = useState<IdentifyTab>('qr')
   const [phoneInput, setPhoneInput] = useState('')
   const [qrInput, setQrInput] = useState('')
   const [searchingMerchant, setSearchingMerchant] = useState(false)
   const [lookupMessage, setLookupMessage] = useState<string | null>(null)
+
+  // Camera QR Scanner State
+  const [isCameraActive, setIsCameraActive] = useState(false)
+  const [cameraError, setCameraError] = useState<string | null>(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const animFrameRef = useRef<number | null>(null)
 
   const [merchants, setMerchants] = useState<Merchant[]>([])
   const [loadingMerchants, setLoadingMerchants] = useState(true)
@@ -112,7 +121,6 @@ export default function PaymentRiskPage() {
       .then((data) => {
         setMerchants(data)
         if (data.length > 0 && !merchantId) {
-          // Pre-select first merchant for convenience
           setSelectedMerchant(data[0])
           setValue('merchant_id', data[0].id)
         }
@@ -128,6 +136,103 @@ export default function PaymentRiskPage() {
     }
   }, [merchantId, merchants])
 
+  // Camera cleanup on unmount or tab switch
+  useEffect(() => {
+    return () => {
+      stopCamera()
+    }
+  }, [])
+
+  function stopCamera() {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current)
+      animFrameRef.current = null
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+    }
+    setIsCameraActive(false)
+  }
+
+  async function startCamera() {
+    setCameraError(null)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+      })
+      streamRef.current = stream
+      setIsCameraActive(true)
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        videoRef.current.setAttribute('playsinline', 'true')
+        await videoRef.current.play()
+        requestScanFrame()
+      }
+    } catch (err: any) {
+      console.error('Camera access error:', err)
+      setCameraError(err.message || 'Unable to access camera. Please allow camera permissions.')
+      setIsCameraActive(false)
+    }
+  }
+
+  function requestScanFrame() {
+    if (!videoRef.current || !canvasRef.current) return
+
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+
+    if (video.readyState === video.HAVE_ENOUGH_DATA && ctx) {
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'dontInvert',
+      })
+
+      if (code && code.data) {
+        // QR detected!
+        stopCamera()
+        handleQrLookup(code.data)
+        return
+      }
+    }
+
+    animFrameRef.current = requestAnimationFrame(requestScanFrame)
+  }
+
+  // Handle uploaded image file scan
+  function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width
+        canvas.height = img.height
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.drawImage(img, 0, 0)
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+          const code = jsQR(imageData.data, imageData.width, imageData.height)
+          if (code && code.data) {
+            handleQrLookup(code.data)
+          } else {
+            setLookupMessage('No QR code detected in the uploaded image.')
+          }
+        }
+      }
+      img.src = event.target?.result as string
+    }
+    reader.readAsDataURL(file)
+  }
+
   // Handle phone lookup
   async function handlePhoneLookup(rawPhone: string) {
     setPhoneInput(rawPhone)
@@ -142,7 +247,6 @@ export default function PaymentRiskPage() {
           setValue('merchant_id', found.id)
           setLookupMessage(`✓ Identified: ${found.business_name}`)
         } else {
-          // Check local merchants list
           const localMatch = merchants.find((m) => m.business_name.toLowerCase().includes(rawPhone.toLowerCase()))
           if (localMatch) {
             setSelectedMerchant(localMatch)
@@ -167,7 +271,6 @@ export default function PaymentRiskPage() {
     if (rawQr.trim().length >= 3) {
       setSearchingMerchant(true)
       try {
-        // Parse URL params if UPI URI
         if (rawQr.includes('am=')) {
           const match = rawQr.match(/am=([0-9.]+)/)
           if (match && match[1]) {
@@ -182,7 +285,6 @@ export default function PaymentRiskPage() {
           setValue('merchant_id', found.id)
           setLookupMessage(`✓ Scanned & Verified: ${found.business_name}`)
         } else {
-          // Check local list by name/upi
           const term = rawQr.toLowerCase()
           const localMatch = merchants.find((m) =>
             m.business_name.toLowerCase().includes(term) || term.includes(m.business_name.toLowerCase().split(' ')[0])
@@ -392,29 +494,109 @@ export default function PaymentRiskPage() {
                 </div>
               )}
 
-              {/* Tab 2: QR / UPI Input */}
+              {/* Tab 2: QR / UPI Input with Live Camera Scanner */}
               {identifyTab === 'qr' && (
-                <div className="space-y-3 animate-fade-in">
-                  <Label htmlFor="qr_input" className="font-semibold text-sm flex items-center justify-between">
-                    <span>Scan / Enter UPI ID or QR URI</span>
-                    <span className="text-[11px] text-muted-foreground font-normal">Extracts name & amount</span>
-                  </Label>
-                  <div className="relative">
-                    <Input
-                      id="qr_input"
-                      value={qrInput}
-                      onChange={(e) => handleQrLookup(e.target.value)}
-                      placeholder="upi://pay?pa=ramesh@upi&pn=RameshStore&am=250"
-                      className="h-11 pr-24 text-xs font-mono"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleQrLookup('upi://pay?pa=ramesh@upi&pn=Ramesh%20General%20Store&am=350')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary hover:bg-primary/20"
-                    >
-                      Sample QR
-                    </button>
+                <div className="space-y-4 animate-fade-in">
+                  
+                  {/* Camera Scanner Viewfinder */}
+                  {isCameraActive ? (
+                    <div className="relative overflow-hidden rounded-2xl bg-black aspect-video flex flex-col items-center justify-center border-2 border-primary/40 shadow-inner">
+                      <video
+                        ref={videoRef}
+                        className="w-full h-full object-cover"
+                        playsInline
+                        muted
+                        autoPlay
+                      />
+                      <canvas ref={canvasRef} className="hidden" />
+
+                      {/* Scanner target overlay box */}
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div className="relative w-48 h-48 border-2 border-emerald-400/80 rounded-2xl flex items-center justify-center">
+                          {/* Corner accents */}
+                          <span className="absolute -top-1 -left-1 w-4 h-4 border-t-4 border-l-4 border-emerald-400 rounded-tl" />
+                          <span className="absolute -top-1 -right-1 w-4 h-4 border-t-4 border-r-4 border-emerald-400 rounded-tr" />
+                          <span className="absolute -bottom-1 -left-1 w-4 h-4 border-b-4 border-l-4 border-emerald-400 rounded-bl" />
+                          <span className="absolute -bottom-1 -right-1 w-4 h-4 border-b-4 border-r-4 border-emerald-400 rounded-br" />
+                          
+                          {/* Laser scanning line */}
+                          <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_8px_#34d399] animate-pulse" />
+                        </div>
+                      </div>
+
+                      {/* Camera control overlay bar */}
+                      <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between bg-black/60 backdrop-blur-md rounded-xl p-2 px-3 text-white">
+                        <span className="text-xs font-medium flex items-center gap-1.5">
+                          <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+                          Align QR code within frame
+                        </span>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          onClick={stopCamera}
+                          className="h-7 text-xs px-2.5"
+                        >
+                          <VideoOff className="h-3.5 w-3.5 mr-1" />
+                          Stop
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={startCamera}
+                        className="h-14 flex flex-col items-center justify-center gap-1 border-primary/20 hover:border-primary/50 hover:bg-primary/5 group"
+                      >
+                        <Camera className="h-5 w-5 text-primary group-hover:scale-110 transition-transform" />
+                        <span className="text-xs font-bold text-foreground">Open Camera Scanner</span>
+                      </Button>
+
+                      <label className="h-14 flex flex-col items-center justify-center gap-1 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 cursor-pointer text-center transition-colors">
+                        <Upload className="h-5 w-5 text-muted-foreground" />
+                        <span className="text-xs font-semibold text-muted-foreground">Upload QR Image</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleImageUpload}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  )}
+
+                  {cameraError && (
+                    <Alert variant="error" className="py-2 text-xs">
+                      {cameraError}
+                    </Alert>
+                  )}
+
+                  {/* Manual UPI Text input & Sample QR */}
+                  <div className="space-y-1.5">
+                    <Label htmlFor="qr_input" className="font-semibold text-xs text-muted-foreground flex items-center justify-between">
+                      <span>Or Enter UPI ID / QR String</span>
+                      <span className="text-[11px] font-normal">Extracts name & amount</span>
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        id="qr_input"
+                        value={qrInput}
+                        onChange={(e) => handleQrLookup(e.target.value)}
+                        placeholder="upi://pay?pa=ramesh@upi&pn=RameshStore&am=250"
+                        className="h-10 pr-24 text-xs font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleQrLookup('upi://pay?pa=ramesh@upi&pn=Ramesh%20General%20Store&am=350')}
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary hover:bg-primary/20"
+                      >
+                        Sample QR
+                      </button>
+                    </div>
                   </div>
+
                   {lookupMessage && (
                     <p className="text-xs font-medium text-emerald-600 animate-fade-in">{lookupMessage}</p>
                   )}
