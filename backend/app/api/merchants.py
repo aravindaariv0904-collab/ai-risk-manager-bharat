@@ -84,6 +84,8 @@ async def lookup_merchant(
     digits = re.sub(r"\D", "", search_term)
     if len(digits) >= 10:
         phone_10 = digits[-10:]
+        
+        # Check users table
         user_res = supabase.table("users").select("id, name, phone").like("phone", f"%{phone_10}%").execute()
         if user_res.data:
             matched_user = user_res.data[0]
@@ -93,6 +95,49 @@ async def lookup_merchant(
                 res["phone"] = matched_user.get("phone")
                 res["is_verified"] = True
                 return MerchantResponse(**res)
+
+        # Check existing merchants for VPA or business name containing this phone number (e.g. 9963170070@ybl)
+        all_m = supabase.table("merchants").select("*").execute()
+        for m in (all_m.data or []):
+            prof = m.get("risk_profile") or {}
+            vpa = prof.get("vpa", "")
+            if phone_10 in vpa or phone_10 in (m.get("business_name") or ""):
+                res = dict(m)
+                res["phone"] = f"+91 {phone_10}"
+                res["upi_id"] = vpa or f"{phone_10}@upi"
+                res["is_verified"] = prof.get("is_verified", False)
+                return MerchantResponse(**res)
+
+        # If unknown / new mobile number, auto-create an UNVERIFIED recipient for fraud & spam check
+        import uuid
+        new_merchant = {
+            "id": str(uuid.uuid4()),
+            "user_id": None,
+            "business_name": f"Recipient (+91 {phone_10})",
+            "business_category": "Individual Transfer",
+            "risk_profile": {
+                "vpa": f"{phone_10}@upi",
+                "phone": phone_10,
+                "is_verified": False,
+                "baseline_safety": "unverified_mobile_transfer"
+            }
+        }
+        try:
+            ins_res = supabase.table("merchants").insert(new_merchant).execute()
+            created_data = ins_res.data[0] if (ins_res.data and isinstance(ins_res.data, list)) else (ins_res.data or new_merchant)
+            created_data["phone"] = f"+91 {phone_10}"
+            created_data["upi_id"] = f"{phone_10}@upi"
+            created_data["is_verified"] = False
+            return MerchantResponse(**created_data)
+        except Exception:
+            return MerchantResponse(
+                id=new_merchant["id"],
+                business_name=new_merchant["business_name"],
+                business_category="Individual Transfer",
+                phone=f"+91 {phone_10}",
+                upi_id=f"{phone_10}@upi",
+                is_verified=False,
+            )
 
     # 3. Search merchants table by business_name (ILIKE)
     m_name = supabase.table("merchants").select("*").ilike("business_name", f"%{search_term}%").limit(1).execute()
@@ -110,16 +155,25 @@ async def lookup_merchant(
         import uuid
         new_merchant = {
             "id": str(uuid.uuid4()),
-            "user_id": "d83675e1-4899-4671-81a2-c76e921cb9c8",
+            "user_id": None,
             "business_name": clean_name,
             "business_category": "Retail & Services",
             "risk_profile": {"vpa": search_term, "is_verified": False, "baseline_safety": "unverified_upi"}
         }
-        ins_res = supabase.table("merchants").insert(new_merchant).execute()
-        created_data = ins_res.data[0] if (ins_res.data and isinstance(ins_res.data, list)) else (ins_res.data or new_merchant)
-        created_data["upi_id"] = search_term
-        created_data["is_verified"] = False
-        return MerchantResponse(**created_data)
+        try:
+            ins_res = supabase.table("merchants").insert(new_merchant).execute()
+            created_data = ins_res.data[0] if (ins_res.data and isinstance(ins_res.data, list)) else (ins_res.data or new_merchant)
+            created_data["upi_id"] = search_term
+            created_data["is_verified"] = False
+            return MerchantResponse(**created_data)
+        except Exception:
+            return MerchantResponse(
+                id=new_merchant["id"],
+                business_name=clean_name,
+                business_category="Retail & Services",
+                upi_id=search_term,
+                is_verified=False,
+            )
 
     return None
 

@@ -269,16 +269,27 @@ export default function PaymentRiskPage() {
         if (found) {
           setSelectedMerchant(found)
           setValue('merchant_id', found.id)
-          setLookupMessage(`✓ Identified: ${found.business_name}`)
-        } else {
-          const localMatch = merchants.find((m) => m.business_name.toLowerCase().includes(rawPhone.toLowerCase()))
-          if (localMatch) {
-            setSelectedMerchant(localMatch)
-            setValue('merchant_id', localMatch.id)
-            setLookupMessage(`✓ Identified: ${localMatch.business_name}`)
+          if (found.is_verified) {
+            setLookupMessage(`✓ Identified Verified Merchant: ${found.business_name}`)
           } else {
-            setLookupMessage('No merchant registered with this number. Selecting nearest match.')
+            setLookupMessage(`⚠️ Unverified Mobile Recipient: ${found.business_name} — Spam & Fraud check required`)
           }
+        } else {
+          // Dynamic recipient for this mobile number
+          const dynamicRecipient: Merchant = {
+            id: '310bf3ee-6936-4905-abcb-dfde714a4c05',
+            user_id: 'd83675e1-4899-4671-81a2-c76e921cb9c8',
+            business_name: `Recipient (+91 ${cleaned.slice(-10)})`,
+            business_category: 'Individual Transfer',
+            phone: `+91 ${cleaned.slice(-10)}`,
+            upi_id: `${cleaned.slice(-10)}@upi`,
+            is_verified: false,
+            risk_profile: { is_verified: false, baseline_safety: 'unverified_mobile_transfer' },
+            created_at: new Date().toISOString(),
+          }
+          setSelectedMerchant(dynamicRecipient)
+          setValue('merchant_id', dynamicRecipient.id)
+          setLookupMessage(`⚠️ Unverified Recipient: +91 ${cleaned.slice(-10)} — Spam & Fraud check required`)
         }
       } catch (err) {
         console.error('Phone lookup failed', err)
