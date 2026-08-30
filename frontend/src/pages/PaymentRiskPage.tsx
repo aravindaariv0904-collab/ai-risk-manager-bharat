@@ -143,6 +143,19 @@ export default function PaymentRiskPage() {
     }
   }, [])
 
+  // Auto-bind stream to video element when camera becomes active
+  useEffect(() => {
+    if (isCameraActive && streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current
+      videoRef.current.setAttribute('playsinline', 'true')
+      videoRef.current.play().then(() => {
+        requestScanFrame()
+      }).catch((err) => {
+        console.error('Video play error:', err)
+      })
+    }
+  }, [isCameraActive])
+
   function stopCamera() {
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current)
@@ -157,22 +170,29 @@ export default function PaymentRiskPage() {
 
   async function startCamera() {
     setCameraError(null)
+    stopCamera()
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
-      })
+      let stream: MediaStream
+      try {
+        // Try back / environment camera first
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        })
+      } catch {
+        // Fallback to default / front webcam
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        })
+      }
+
       streamRef.current = stream
       setIsCameraActive(true)
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        videoRef.current.setAttribute('playsinline', 'true')
-        await videoRef.current.play()
-        requestScanFrame()
-      }
     } catch (err: any) {
       console.error('Camera access error:', err)
-      setCameraError(err.message || 'Unable to access camera. Please allow camera permissions.')
+      setCameraError(err.message || 'Unable to access camera. Please allow camera permissions in your browser.')
       setIsCameraActive(false)
     }
   }
@@ -182,22 +202,23 @@ export default function PaymentRiskPage() {
 
     const video = videoRef.current
     const canvas = canvasRef.current
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })
 
-    if (video.readyState === video.HAVE_ENOUGH_DATA && ctx) {
-      canvas.width = video.videoWidth
-      canvas.height = video.videoHeight
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-      const code = jsQR(imageData.data, imageData.width, imageData.height, {
-        inversionAttempts: 'dontInvert',
-      })
+    if (video.readyState >= video.HAVE_CURRENT_DATA) {
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })
+      if (ctx && video.videoWidth > 0 && video.videoHeight > 0) {
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+        const code = jsQR(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: 'attemptBoth',
+        })
 
-      if (code && code.data) {
-        // QR detected!
-        stopCamera()
-        handleQrLookup(code.data)
-        return
+        if (code && code.data && code.data.trim().length > 0) {
+          stopCamera()
+          handleQrLookup(code.data)
+          return
+        }
       }
     }
 
