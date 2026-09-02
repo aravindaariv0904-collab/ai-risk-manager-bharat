@@ -57,11 +57,11 @@ async def verify_token(
         parts = token.split(".")
         role = parts[1] if len(parts) > 1 else "citizen"
         user_map = {
-            "citizen": "demo-auth-citizen",
-            "merchant": "demo-auth-merchant",
-            "admin": "demo-auth-admin",
+            "citizen": "618672b0-4a6d-45ee-8f90-a26df8d91192",
+            "merchant": "8bc194c0-e8f2-43c4-9dc3-4ae37384e52c",
+            "admin": "618672b0-4a6d-45ee-8f90-a26df8d91192",
         }
-        sub = user_map.get(role, "demo-auth-citizen")
+        sub = user_map.get(role, "618672b0-4a6d-45ee-8f90-a26df8d91192")
         return {"sub": sub, "role": role, "demo": True}
     # ─────────────────────────────────────────────────────────────────────────
 

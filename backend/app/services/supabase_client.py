@@ -180,15 +180,25 @@ class PostgresTableQuery:
 
 class PostgresClient:
     def get_conn(self):
-        # Connect to Supabase Postgres database
-        return psycopg2.connect(
-            dbname="postgres",
-            user="postgres",
-            password="Aariv@948*##",
-            host="db.digktcqwnvkdfyhgkroc.supabase.co",
-            port=5432,
-            connect_timeout=10,
-        )
+        # Connect to Supabase Postgres via IPv4 Pooler (ap-southeast-1)
+        try:
+            return psycopg2.connect(
+                dbname="postgres",
+                user="postgres.digktcqwnvkdfyhgkroc",
+                password="Aariv@948*##",
+                host="aws-0-ap-southeast-1.pooler.supabase.com",
+                port=6543,
+                connect_timeout=8,
+            )
+        except Exception:
+            return psycopg2.connect(
+                dbname="postgres",
+                user="postgres",
+                password="Aariv@948*##",
+                host="db.digktcqwnvkdfyhgkroc.supabase.co",
+                port=5432,
+                connect_timeout=8,
+            )
 
     def table(self, name: str):
         return PostgresTableQuery(name, self.get_conn)
