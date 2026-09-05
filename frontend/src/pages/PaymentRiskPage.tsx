@@ -69,6 +69,18 @@ const RISK_CONFIG = {
     buttonVariant: 'destructive' as const,
     buttonLabel: 'Proceed Anyway (High Risk)',
   },
+  CRITICAL: {
+    gradient: 'from-rose-700 to-red-950',
+    bg: 'bg-rose-50',
+    border: 'border-rose-300',
+    text: 'text-rose-900',
+    badge: 'bg-rose-200 text-rose-900 font-bold',
+    icon: AlertTriangle,
+    label: 'CRITICAL RISK',
+    message: 'CRITICAL: High fraud indicators detected. Transaction is blocked.',
+    buttonVariant: 'destructive' as const,
+    buttonLabel: 'Transaction Blocked (Critical Risk)',
+  },
 }
 
 type IdentifyTab = 'phone' | 'qr' | 'select'

@@ -43,7 +43,7 @@ async def risk_precheck(
         except Exception:
             pass
 
-    risk_score, risk_level, risk_action, reasons, details = await risk_engine.evaluate(
+    eval_res = await risk_engine.evaluate(
         payer_id=payer_id,
         merchant_id=str(request.merchant_id),
         amount=request.amount,
@@ -55,18 +55,18 @@ async def risk_precheck(
         "amount": request.amount,
         "currency": request.currency,
         "status": "created",
-        "risk_score": risk_score,
-        "risk_level": risk_level.value,
-        "risk_action": risk_action.value,
+        "risk_score": eval_res.score,
+        "risk_level": eval_res.level.value,
+        "risk_action": eval_res.decision.value,
     }).execute()
 
     transaction_id = txn_insert.data[0]["id"]
 
-    for reason in reasons:
+    for reason in eval_res.signals:
         supabase.table("risk_events").insert({
             "transaction_id": transaction_id,
             "signal_name": reason.signal_name,
-            "signal_value": {},
+            "signal_value": {"category": reason.category} if reason.category else {},
             "severity": reason.severity.value,
             "score_impact": reason.score_impact,
             "reason": reason.reason,
@@ -74,19 +74,24 @@ async def risk_precheck(
 
     supabase.table("risk_decisions").insert({
         "transaction_id": transaction_id,
-        "score": risk_score,
-        "level": risk_level.value,
-        "action": risk_action.value,
-        "model_version": "v1.0",
+        "score": eval_res.score,
+        "level": eval_res.level.value,
+        "action": eval_res.decision.value,
+        "category_scores": eval_res.category_scores.model_dump(),
+        "explanation_data": eval_res.explanation_data,
+        "model_version": "v2.0",
     }).execute()
 
     return RiskPrecheckResponse(
         transaction_id=transaction_id,
-        risk_score=risk_score,
-        risk_level=risk_level,
-        risk_action=risk_action,
-        reasons=reasons,
-        recommended_action=risk_action.value.replace("_", " ").title(),
+        risk_score=eval_res.score,
+        risk_level=eval_res.level,
+        risk_action=eval_res.decision,
+        reasons=eval_res.signals,
+        category_scores=eval_res.category_scores,
+        explanation_data=eval_res.explanation_data,
+        recommended_action=eval_res.decision.value.replace("_", " ").title(),
+        model_version="v2.0",
     )
 
 
@@ -107,6 +112,7 @@ async def get_risk_decision(
     reasons = [
         RiskReason(
             signal_name=e["signal_name"],
+            category=(e.get("signal_value") or {}).get("category"),
             reason=e["reason"],
             severity=SignalSeverity(e["severity"]),
             score_impact=e["score_impact"],
@@ -114,15 +120,24 @@ async def get_risk_decision(
         for e in (events_resp.data or [])
     ]
 
+    cat_scores = None
+    if decision.get("category_scores"):
+        try:
+            cat_scores = CategoryScores(**decision["category_scores"])
+        except Exception:
+            pass
+
     return RiskDecisionResponse(
         transaction_id=transaction_id,
         score=decision["score"],
         level=RiskLevel(decision["level"]),
         action=RiskAction(decision["action"]),
         explanation=decision.get("explanation"),
-        model_version=decision["model_version"],
+        category_scores=cat_scores,
+        explanation_data=decision.get("explanation_data"),
+        model_version=decision.get("model_version", "v2.0"),
         reasons=reasons,
-        created_at=decision["created_at"],
+        created_at=decision.get("created_at"),
     )
 
 

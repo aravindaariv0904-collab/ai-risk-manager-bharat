@@ -8,8 +8,9 @@ export default function RiskLevelBadge({ level }: { level: RiskLevel | null }) {
     LOW: { label: 'LOW RISK', variant: 'success' },
     MEDIUM: { label: 'MEDIUM RISK', variant: 'warning' },
     HIGH: { label: 'HIGH RISK', variant: 'danger' },
+    CRITICAL: { label: 'CRITICAL RISK', variant: 'danger' },
   }
 
-  const config = map[level]
+  const config = map[level] || { label: String(level), variant: 'danger' }
   return <Badge variant={config.variant}>{config.label}</Badge>
 }

@@ -1,9 +1,17 @@
 export type UserRole = 'citizen' | 'merchant' | 'admin'
 export type Language = 'en' | 'hi' | 'ta'
-export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH'
-export type RiskAction = 'ALLOW' | 'VERIFY' | 'WARN' | 'BLOCK'
+export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+export type RiskAction = 'ALLOW' | 'STEP_UP_VERIFICATION' | 'HOLD_FOR_REVIEW' | 'BLOCK' | 'VERIFY' | 'WARN'
 export type TransactionStatus = 'created' | 'pending' | 'captured' | 'failed' | 'refunded'
 export type SignalSeverity = 'LOW' | 'MEDIUM' | 'HIGH'
+
+export interface CategoryScores {
+  identity_trust: number
+  transaction_anomaly: number
+  behavioral_anomaly: number
+  velocity_network: number
+  ml_anomaly: number
+}
 
 export interface Profile {
   id: string
@@ -46,6 +54,7 @@ export interface Transaction {
 
 export interface RiskReason {
   signal_name: string
+  category?: string | null
   reason: string
   severity: SignalSeverity
   score_impact: number
@@ -58,6 +67,8 @@ export interface RiskPrecheckResult {
   risk_action: RiskAction
   reasons: RiskReason[]
   recommended_action: string
+  category_scores?: CategoryScores
+  explanation_data?: Record<string, unknown>
 }
 
 export interface RiskDecision {
@@ -68,7 +79,9 @@ export interface RiskDecision {
   explanation: string | null
   model_version: string
   reasons: RiskReason[]
-  created_at: string
+  category_scores?: CategoryScores
+  explanation_data?: Record<string, unknown>
+  created_at?: string
 }
 
 export interface ExplainRiskInput {

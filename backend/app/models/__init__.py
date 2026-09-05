@@ -32,13 +32,16 @@ class RiskLevel(str, enum.Enum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
 
 
 class RiskAction(str, enum.Enum):
     ALLOW = "ALLOW"
+    STEP_UP_VERIFICATION = "STEP_UP_VERIFICATION"
+    HOLD_FOR_REVIEW = "HOLD_FOR_REVIEW"
+    BLOCK = "BLOCK"
     VERIFY = "VERIFY"
     WARN = "WARN"
-    BLOCK = "BLOCK"
 
 
 class SignalSeverity(str, enum.Enum):
@@ -137,7 +140,9 @@ class RiskDecision(Base):
     level = Column(Enum(RiskLevel), nullable=False)
     action = Column(Enum(RiskAction), nullable=False)
     explanation = Column(Text)
-    model_version = Column(String(20), default="v1.0")
+    category_scores = Column(JSONB, default={})
+    explanation_data = Column(JSONB, default={})
+    model_version = Column(String(20), default="v2.0")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     transaction = relationship("Transaction", back_populates="risk_decision")

@@ -35,6 +35,14 @@ const LEVEL_CONFIG: Record<RiskLevel, {
     label: 'High Risk',
     emoji: '🔴',
   },
+  CRITICAL: {
+    stroke: '#b91c1c',
+    glow: 'rgba(185, 28, 28, 0.4)',
+    textColor: 'text-rose-700',
+    bg: 'text-rose-950',
+    label: 'Critical Risk',
+    emoji: '🚫',
+  },
 }
 
 const SIZES = {

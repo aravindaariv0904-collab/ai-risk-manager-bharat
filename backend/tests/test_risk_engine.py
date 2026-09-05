@@ -3,6 +3,8 @@ from datetime import datetime
 from app.risk.engine import (
     RuleEngine, TransactionContext, RiskAggregator,
     RiskLevel, RiskAction,
+    CATEGORY_IDENTITY_TRUST, CATEGORY_TRANSACTION_ANOMALY,
+    CATEGORY_BEHAVIORAL_ANOMALY, CATEGORY_VELOCITY_NETWORK, CATEGORY_ML_ANOMALY,
 )
 
 
@@ -40,57 +42,56 @@ class TestRuleEngine:
         ctx = make_context(is_new_recipient=True, amount=20000, avg_amount=4000)
         reasons = RuleEngine().evaluate(ctx)
         names = [r.signal_name for r in reasons]
-        assert "new_recipient_high_amount" in names
-        score = next(r for r in reasons if r.signal_name == "new_recipient_high_amount")
-        assert score.score_impact == 30
+        assert "txn_amount_spike_3x" in names
+        assert "id_new_recipient" in names
 
     def test_rapid_repeated_transactions(self):
         ctx = make_context(txn_count_1h=6)
         reasons = RuleEngine().evaluate(ctx)
         names = [r.signal_name for r in reasons]
-        assert "rapid_repeated_txns" in names
+        assert "vel_rapid_txns_1h" in names
 
     def test_rapid_below_threshold(self):
         ctx = make_context(txn_count_1h=5)
         reasons = RuleEngine().evaluate(ctx)
         names = [r.signal_name for r in reasons]
-        assert "rapid_repeated_txns" not in names
+        assert "vel_rapid_txns_1h" not in names
 
     def test_unusual_time_late_night(self):
         ctx = make_context(hour=3)
         reasons = RuleEngine().evaluate(ctx)
         names = [r.signal_name for r in reasons]
-        assert "unusual_time" in names
+        assert "beh_unusual_hour" in names
 
     def test_unusual_time_after_11pm(self):
         ctx = make_context(hour=23)
         reasons = RuleEngine().evaluate(ctx)
         names = [r.signal_name for r in reasons]
-        assert "unusual_time" in names
+        assert "beh_unusual_hour" in names
 
     def test_unusual_time_normal_hours(self):
         ctx = make_context(hour=12)
         reasons = RuleEngine().evaluate(ctx)
         names = [r.signal_name for r in reasons]
-        assert "unusual_time" not in names
+        assert "beh_unusual_hour" not in names
 
     def test_failed_attempts(self):
         ctx = make_context(failed_count_24h=4)
         reasons = RuleEngine().evaluate(ctx)
         names = [r.signal_name for r in reasons]
-        assert "multiple_failed_attempts" in names
+        assert "beh_failed_attempts_spike" in names
 
     def test_amount_anomaly_above_p95(self):
         ctx = make_context(amount=20000, p95_amount=15000)
         reasons = RuleEngine().evaluate(ctx)
         names = [r.signal_name for r in reasons]
-        assert "amount_anomaly" in names
+        assert "txn_amount_exceeds_p95" in names
 
     def test_amount_normal_below_p95(self):
         ctx = make_context(amount=12000, p95_amount=15000)
         reasons = RuleEngine().evaluate(ctx)
         names = [r.signal_name for r in reasons]
-        assert "amount_anomaly" not in names
+        assert "txn_amount_exceeds_p95" not in names
 
     def test_empty_history_no_rules(self):
         ctx = make_context(
@@ -98,64 +99,134 @@ class TestRuleEngine:
             txn_count_1h=0, txn_count_24h=0,
         )
         reasons = RuleEngine().evaluate(ctx)
-        assert all(r.score_impact < 30 for r in reasons)
+        assert all(r.score_impact <= 25 for r in reasons)
 
 
 class TestRiskAggregator:
     def test_low_thresholds(self):
         aggregator = RiskAggregator()
-        score, level, action, _ = aggregator.aggregate([], 0, 0, 0)
-        assert score <= 30
-        assert level == RiskLevel.LOW
-        assert action == RiskAction.ALLOW
+        res = aggregator.aggregate([], 0, 0, 0)
+        assert res.score <= 30
+        assert res.level == RiskLevel.LOW
+        assert res.decision == RiskAction.ALLOW
 
     def test_medium_thresholds(self):
         aggregator = RiskAggregator()
-        score, level, action, _ = aggregator.aggregate([], 40, 0, 0)
-        assert 31 <= score <= 65
-        assert level == RiskLevel.MEDIUM
-        assert action == RiskAction.VERIFY
+        from app.schemas import RiskReason, SignalSeverity
+        signals = [
+            RiskReason(signal_name="id_unverified_recipient", category="identity_trust", reason="test", severity=SignalSeverity.MEDIUM, score_impact=15),
+            RiskReason(signal_name="txn_amount_spike_3x", category="transaction_anomaly", reason="test", severity=SignalSeverity.HIGH, score_impact=20),
+        ]
+        res = aggregator.aggregate(signals, 0, 0, 0)
+        assert 31 <= res.score <= 60
+        assert res.level == RiskLevel.MEDIUM
+        assert res.decision == RiskAction.STEP_UP_VERIFICATION
 
     def test_high_thresholds(self):
         aggregator = RiskAggregator()
-        score, level, action, _ = aggregator.aggregate([], 70, 0, 0)
-        assert 66 <= score <= 100
-        assert level == RiskLevel.HIGH
-        assert action == RiskAction.WARN
+        from app.schemas import RiskReason, SignalSeverity
+        signals = [
+            RiskReason(signal_name="id_unverified_recipient", category="identity_trust", reason="test", severity=SignalSeverity.MEDIUM, score_impact=15),
+            RiskReason(signal_name="id_new_recipient", category="identity_trust", reason="test", severity=SignalSeverity.LOW, score_impact=10),
+            RiskReason(signal_name="txn_amount_spike_3x", category="transaction_anomaly", reason="test", severity=SignalSeverity.HIGH, score_impact=20),
+            RiskReason(signal_name="beh_failed_attempts_spike", category="behavioral_anomaly", reason="test", severity=SignalSeverity.HIGH, score_impact=20),
+        ]
+        res = aggregator.aggregate(signals, 0, 0, 0)
+        assert 61 <= res.score <= 80
+        assert res.level == RiskLevel.HIGH
+        assert res.decision == RiskAction.HOLD_FOR_REVIEW
 
     def test_boundary_30_is_low(self):
         aggregator = RiskAggregator()
-        _, level, _, _ = aggregator.aggregate([], 30, 0, 0)
-        assert level == RiskLevel.LOW
+        from app.schemas import RiskReason, SignalSeverity
+        signals = [
+            RiskReason(signal_name="id_unverified_recipient", category="identity_trust", reason="test", severity=SignalSeverity.MEDIUM, score_impact=15),
+            RiskReason(signal_name="beh_unusual_hour", category="behavioral_anomaly", reason="test", severity=SignalSeverity.MEDIUM, score_impact=15),
+        ]
+        res = aggregator.aggregate(signals, 0, 0, 0)
+        assert res.score == 30
+        assert res.level == RiskLevel.LOW
+        assert res.decision == RiskAction.ALLOW
 
     def test_boundary_31_is_medium(self):
         aggregator = RiskAggregator()
-        _, level, _, _ = aggregator.aggregate([], 31, 0, 0)
-        assert level == RiskLevel.MEDIUM
+        from app.schemas import RiskReason, SignalSeverity
+        signals = [
+            RiskReason(signal_name="id_unverified_recipient", category="identity_trust", reason="test", severity=SignalSeverity.MEDIUM, score_impact=15),
+            RiskReason(signal_name="beh_unusual_hour", category="behavioral_anomaly", reason="test", severity=SignalSeverity.MEDIUM, score_impact=15),
+        ]
+        res = aggregator.aggregate(signals, 0, 3.0, 0)  # ml contributes 1 point -> 31
+        assert res.score == 31
+        assert res.level == RiskLevel.MEDIUM
+        assert res.decision == RiskAction.STEP_UP_VERIFICATION
 
-    def test_boundary_65_is_medium(self):
+    def test_boundary_60_is_medium(self):
         aggregator = RiskAggregator()
-        _, level, _, _ = aggregator.aggregate([], 65, 0, 0)
-        assert level == RiskLevel.MEDIUM
+        from app.schemas import RiskReason, SignalSeverity
+        signals = [
+            RiskReason(signal_name="id_unverified_recipient", category="identity_trust", reason="test", severity=SignalSeverity.MEDIUM, score_impact=25),
+            RiskReason(signal_name="txn_amount_spike_3x", category="transaction_anomaly", reason="test", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="vel_rapid_txns_1h", category="velocity_network", reason="test", severity=SignalSeverity.LOW, score_impact=10),
+        ]
+        res = aggregator.aggregate(signals, 0, 0, 0)
+        assert res.score == 60
+        assert res.level == RiskLevel.MEDIUM
+        assert res.decision == RiskAction.STEP_UP_VERIFICATION
 
-    def test_boundary_66_is_high(self):
+    def test_boundary_61_is_high(self):
         aggregator = RiskAggregator()
-        _, level, _, _ = aggregator.aggregate([], 66, 0, 0)
-        assert level == RiskLevel.HIGH
+        from app.schemas import RiskReason, SignalSeverity
+        signals = [
+            RiskReason(signal_name="id_unverified_recipient", category="identity_trust", reason="test", severity=SignalSeverity.MEDIUM, score_impact=25),
+            RiskReason(signal_name="txn_amount_spike_3x", category="transaction_anomaly", reason="test", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="vel_rapid_txns_1h", category="velocity_network", reason="test", severity=SignalSeverity.LOW, score_impact=10),
+        ]
+        res = aggregator.aggregate(signals, 0, 3.0, 0)  # +1 ml -> 61
+        assert res.score == 61
+        assert res.level == RiskLevel.HIGH
+        assert res.decision == RiskAction.HOLD_FOR_REVIEW
+
+    def test_boundary_80_is_high(self):
+        aggregator = RiskAggregator()
+        from app.schemas import RiskReason, SignalSeverity
+        signals = [
+            RiskReason(signal_name="id_unverified_recipient", category="identity_trust", reason="test", severity=SignalSeverity.MEDIUM, score_impact=25),
+            RiskReason(signal_name="txn_amount_spike_3x", category="transaction_anomaly", reason="test", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="beh_failed_attempts_spike", category="behavioral_anomaly", reason="test", severity=SignalSeverity.HIGH, score_impact=20),
+            RiskReason(signal_name="vel_rapid_txns_1h", category="velocity_network", reason="test", severity=SignalSeverity.LOW, score_impact=10),
+        ]
+        res = aggregator.aggregate(signals, 0, 0, 0)
+        assert res.score == 80
+        assert res.level == RiskLevel.HIGH
+        assert res.decision == RiskAction.HOLD_FOR_REVIEW
+
+    def test_boundary_81_is_critical(self):
+        aggregator = RiskAggregator()
+        from app.schemas import RiskReason, SignalSeverity
+        signals = [
+            RiskReason(signal_name="id_unverified_recipient", category="identity_trust", reason="test", severity=SignalSeverity.MEDIUM, score_impact=25),
+            RiskReason(signal_name="txn_amount_spike_3x", category="transaction_anomaly", reason="test", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="beh_failed_attempts_spike", category="behavioral_anomaly", reason="test", severity=SignalSeverity.HIGH, score_impact=20),
+            RiskReason(signal_name="vel_rapid_txns_1h", category="velocity_network", reason="test", severity=SignalSeverity.LOW, score_impact=10),
+        ]
+        res = aggregator.aggregate(signals, 0, 3.0, 0)  # +1 ml -> 81
+        assert res.score == 81
+        assert res.level == RiskLevel.CRITICAL
+        assert res.decision == RiskAction.BLOCK
 
     def test_score_capped_at_100(self):
         aggregator = RiskAggregator()
-        score, _, _, _ = aggregator.aggregate([], 100, 0, 0)
-        assert score == 100
-
-    def test_rule_score_contributes(self):
         from app.schemas import RiskReason, SignalSeverity
-        aggregator = RiskAggregator()
-        reasons = [
-            RiskReason(signal_name="r1", reason="test", severity=SignalSeverity.HIGH, score_impact=30)
+        signals = [
+            RiskReason(signal_name="id_1", category="identity_trust", reason="test", severity=SignalSeverity.HIGH, score_impact=100),
+            RiskReason(signal_name="txn_1", category="transaction_anomaly", reason="test", severity=SignalSeverity.HIGH, score_impact=100),
+            RiskReason(signal_name="beh_1", category="behavioral_anomaly", reason="test", severity=SignalSeverity.HIGH, score_impact=100),
+            RiskReason(signal_name="vel_1", category="velocity_network", reason="test", severity=SignalSeverity.HIGH, score_impact=100),
         ]
-        score, _, _, _ = aggregator.aggregate(reasons, 10, 0, 0)
-        assert score == 40
+        res = aggregator.aggregate(signals, 0, 30.0, 50)
+        assert res.score == 100
+        assert res.level == RiskLevel.CRITICAL
+        assert res.decision == RiskAction.BLOCK
 
 
 class TestIsolationForest:

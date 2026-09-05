@@ -16,13 +16,16 @@ class RiskLevel(str, enum.Enum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
 
 
 class RiskAction(str, enum.Enum):
     ALLOW = "ALLOW"
+    STEP_UP_VERIFICATION = "STEP_UP_VERIFICATION"
+    HOLD_FOR_REVIEW = "HOLD_FOR_REVIEW"
+    BLOCK = "BLOCK"
     VERIFY = "VERIFY"
     WARN = "WARN"
-    BLOCK = "BLOCK"
 
 
 class SignalSeverity(str, enum.Enum):
@@ -36,11 +39,29 @@ class PrecheckModes(str, enum.Enum):
     STANDARD = "standard"
 
 
+class CategoryScores(BaseModel):
+    identity_trust: int = Field(ge=0, le=25, default=0)
+    transaction_anomaly: int = Field(ge=0, le=25, default=0)
+    behavioral_anomaly: int = Field(ge=0, le=25, default=0)
+    velocity_network: int = Field(ge=0, le=15, default=0)
+    ml_anomaly: int = Field(ge=0, le=10, default=0)
+
+
 class RiskReason(BaseModel):
     signal_name: str
+    category: Optional[str] = None
     reason: str
     severity: SignalSeverity
     score_impact: int = Field(ge=0, le=100)
+
+
+class CompositeRiskOutput(BaseModel):
+    score: int = Field(ge=0, le=100)
+    level: RiskLevel
+    decision: RiskAction
+    signals: List[RiskReason] = Field(default_factory=list)
+    category_scores: CategoryScores
+    explanation_data: Dict = Field(default_factory=dict)
 
 
 # ---- Risk precheck ----
@@ -61,7 +82,9 @@ class RiskPrecheckResponse(BaseModel):
     risk_action: RiskAction
     reasons: List[RiskReason] = Field(default_factory=list)
     recommended_action: str
-    model_version: str = "v1.0"
+    category_scores: Optional[CategoryScores] = None
+    explanation_data: Optional[Dict] = None
+    model_version: str = "v2.0"
     processing_time_ms: Optional[int] = None
 
 
@@ -71,8 +94,10 @@ class RiskDecisionResponse(BaseModel):
     level: RiskLevel
     action: RiskAction
     explanation: Optional[str] = None
-    model_version: str
+    model_version: str = "v2.0"
     reasons: List[RiskReason] = Field(default_factory=list)
+    category_scores: Optional[CategoryScores] = None
+    explanation_data: Optional[Dict] = None
     created_at: Optional[datetime] = None
 
 

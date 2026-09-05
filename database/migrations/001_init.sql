@@ -49,8 +49,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     status TEXT NOT NULL DEFAULT 'created'
         CHECK (status IN ('created', 'pending', 'captured', 'failed', 'refunded')),
     risk_score INTEGER CHECK (risk_score BETWEEN 0 AND 100),
-    risk_level TEXT CHECK (risk_level IN ('LOW', 'MEDIUM', 'HIGH')),
-    risk_action TEXT CHECK (risk_action IN ('ALLOW', 'VERIFY', 'WARN', 'BLOCK')),
+    risk_level TEXT CHECK (risk_level IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+    risk_action TEXT CHECK (risk_action IN ('ALLOW', 'VERIFY', 'WARN', 'BLOCK', 'STEP_UP_VERIFICATION', 'HOLD_FOR_REVIEW')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -82,10 +82,12 @@ CREATE TABLE IF NOT EXISTS risk_decisions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     transaction_id UUID NOT NULL UNIQUE REFERENCES transactions(id) ON DELETE CASCADE,
     score INTEGER NOT NULL CHECK (score BETWEEN 0 AND 100),
-    level TEXT NOT NULL CHECK (level IN ('LOW', 'MEDIUM', 'HIGH')),
-    action TEXT NOT NULL CHECK (action IN ('ALLOW', 'VERIFY', 'WARN', 'BLOCK')),
+    level TEXT NOT NULL CHECK (level IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+    action TEXT NOT NULL CHECK (action IN ('ALLOW', 'VERIFY', 'WARN', 'BLOCK', 'STEP_UP_VERIFICATION', 'HOLD_FOR_REVIEW')),
     explanation TEXT,
-    model_version TEXT NOT NULL DEFAULT 'v1.0',
+    category_scores JSONB DEFAULT '{}'::jsonb,
+    explanation_data JSONB DEFAULT '{}'::jsonb,
+    model_version TEXT NOT NULL DEFAULT 'v2.0',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
