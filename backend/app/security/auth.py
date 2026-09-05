@@ -116,9 +116,27 @@ async def get_current_user_id(payload: Dict = Depends(verify_token)) -> str:
 
 
 async def get_current_user_role(
-    user_id: str = Depends(get_current_user_id),
+    payload: Dict = Depends(verify_token),
 ) -> str:
-    """Look up role from users table with a 60-second TTL cache."""
+    """
+    Resolve the user's role.
+    Priority:
+    1. Role embedded in JWT payload (demo tokens and Supabase app_metadata)
+    2. Cached DB lookup (60-second TTL)
+    3. DB lookup from users table
+    4. Fallback: 'citizen'
+    """
+    # 1. Check token payload for role (demo tokens + Supabase app_metadata.role)
+    token_role = (
+        payload.get("role")
+        or (payload.get("app_metadata") or {}).get("role")
+        or (payload.get("user_metadata") or {}).get("role")
+    )
+    if token_role and token_role in ("citizen", "merchant", "admin"):
+        return token_role
+
+    # 2. DB lookup with TTL cache
+    user_id = payload.get("sub", "")
     now = time.time()
     cached = _role_cache.get(user_id)
     if cached and cached[1] > now:
@@ -128,7 +146,7 @@ async def get_current_user_role(
         from app.services.supabase_client import get_supabase_admin
         supabase = get_supabase_admin()
         resp = supabase.table("users").select("role").eq("auth_user_id", user_id).maybe_single().execute()
-        if resp.data:
+        if resp and resp.data:
             role = resp.data.get("role", "citizen")
             _role_cache[user_id] = (role, now + 60.0)
             return role

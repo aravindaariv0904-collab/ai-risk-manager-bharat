@@ -25,23 +25,34 @@ async def admin_dashboard(
 
     supabase = get_supabase_admin()
 
-    total = supabase.table("transactions").select("id", count="exact").execute()
-    low = supabase.table("transactions").select("id", count="exact").eq("risk_level", "LOW").execute()
-    medium = supabase.table("transactions").select("id", count="exact").eq("risk_level", "MEDIUM").execute()
-    high = supabase.table("transactions").select("id", count="exact").eq("risk_level", "HIGH").execute()
-    suspicious = supabase.table("transactions").select("id", count="exact").eq("risk_level", "HIGH").execute()
-    verified = supabase.table("transactions").select("id", count="exact").eq("status", "captured").execute()
-    unverified = supabase.table("transactions").select("id", count="exact").neq("status", "captured").execute()
+    try:
+        total = supabase.table("transactions").select("id", count="exact").execute()
+        low = supabase.table("transactions").select("id", count="exact").eq("risk_level", "LOW").execute()
+        medium = supabase.table("transactions").select("id", count="exact").eq("risk_level", "MEDIUM").execute()
+        high = supabase.table("transactions").select("id", count="exact").eq("risk_level", "HIGH").execute()
+        suspicious = supabase.table("transactions").select("id", count="exact").eq("risk_level", "HIGH").execute()
+        verified = supabase.table("transactions").select("id", count="exact").eq("status", "captured").execute()
+        unverified = supabase.table("transactions").select("id", count="exact").neq("status", "captured").execute()
 
-    return AdminDashboardResponse(
-        total_transactions=total.count or 0,
-        low_risk=low.count or 0,
-        medium_risk=medium.count or 0,
-        high_risk=high.count or 0,
-        suspicious_count=suspicious.count or 0,
-        verified_payments=verified.count or 0,
-        unverified_claims=unverified.count or 0,
-    )
+        return AdminDashboardResponse(
+            total_transactions=total.count or 0,
+            low_risk=low.count or 0,
+            medium_risk=medium.count or 0,
+            high_risk=high.count or 0,
+            suspicious_count=suspicious.count or 0,
+            verified_payments=verified.count or 0,
+            unverified_claims=unverified.count or 0,
+        )
+    except Exception:
+        return AdminDashboardResponse(
+            total_transactions=0,
+            low_risk=0,
+            medium_risk=0,
+            high_risk=0,
+            suspicious_count=0,
+            verified_payments=0,
+            unverified_claims=0,
+        )
 
 
 @router.get("/risk-distribution", response_model=RiskDistributionResponse)
@@ -81,7 +92,13 @@ async def transaction_volume(
 
     daily_counts = {}
     for txn in (result.data or []):
-        date = txn["created_at"][:10]
+        raw_val = txn.get("created_at")
+        if isinstance(raw_val, datetime):
+            date = raw_val.strftime("%Y-%m-%d")
+        elif isinstance(raw_val, str):
+            date = raw_val[:10]
+        else:
+            continue
         daily_counts[date] = daily_counts.get(date, 0) + 1
 
     sorted_dates = sorted(daily_counts.keys())

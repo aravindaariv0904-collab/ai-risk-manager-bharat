@@ -78,6 +78,11 @@ class PostgresTableQuery:
         self.params.append(str(val) if isinstance(val, type(settings)) else val)
         return self
 
+    def neq(self, col: str, val: Any):
+        self.where_clauses.append(f'"{col}" != %s')
+        self.params.append(str(val) if isinstance(val, type(settings)) else val)
+        return self
+
     def in_(self, col: str, vals: List[Any]):
         if not vals:
             self.where_clauses.append("1=0")
@@ -145,7 +150,7 @@ class PostgresTableQuery:
                     cur.execute(count_query, self.params)
                     total_count = cur.fetchone()["c"]
 
-                query = f'SELECT * FROM "{self.table_name}"{where_sql}'
+                query = f'SELECT {self.select_cols} FROM "{self.table_name}"{where_sql}'
                 if self.order_by:
                     query += f" ORDER BY {self.order_by}"
                 if self._limit is not None:
