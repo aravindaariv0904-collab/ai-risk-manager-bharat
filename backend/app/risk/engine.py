@@ -1,9 +1,15 @@
-from typing import List, Dict
+from typing import List, Dict, Optional
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from app.models import RiskLevel, RiskAction, SignalSeverity
 from app.schemas import RiskReason
+from app.risk.ml_pipeline import (
+    MLAnomalyDetector,
+    CanonicalFeaturePipeline,
+    CANONICAL_FEATURE_NAMES,
+    CANONICAL_MODEL_VERSION,
+)
 
 
 @dataclass
@@ -25,6 +31,7 @@ class TransactionContext:
     p95_amount: float
     frequent_merchants: List[str]
     typical_hours: List[int]
+    merchant_category: Optional[str] = None
 
 
 class RuleEngine:
@@ -118,11 +125,13 @@ class BehavioralBaseline:
 
         is_new_recipient = len(merchant_txns) == 0
 
-        # Check if merchant is verified
+        # Check if merchant is verified and get category
         is_unverified = False
+        merchant_category = None
         try:
             m_resp = self.supabase.table("merchants").select("*").eq("id", merchant_id).maybe_single().execute()
             if m_resp.data:
+                merchant_category = m_resp.data.get("business_category")
                 profile = m_resp.data.get("risk_profile") or {}
                 if isinstance(profile, dict) and profile.get("is_verified") is False:
                     is_unverified = True
@@ -182,6 +191,7 @@ class BehavioralBaseline:
             p95_amount=p95_amount,
             frequent_merchants=frequent_merchants,
             typical_hours=typical_hours,
+            merchant_category=merchant_category,
         )
 
     async def _get_recent_transactions(self, payer_id: str, days: int = 30) -> List[Dict]:
@@ -198,91 +208,6 @@ class BehavioralBaseline:
             return response.data or []
         except Exception:
             return []
-
-
-class MLAnomalyDetector:
-    def __init__(self):
-        import joblib
-        import os
-
-        self._joblib = joblib
-        self._os = os
-        self.model = None
-        self.model_path = "models/isolation_forest.joblib"
-        self._load_or_train()
-
-    def _load_or_train(self):
-        import numpy as np
-        from sklearn.ensemble import IsolationForest
-        import os
-
-        # Try multiple paths for model persistence
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.model_path = os.path.join(base_dir, "models", "isolation_forest.joblib")
-
-        if os.path.exists(self.model_path):
-            try:
-                self.model = self._joblib.load(self.model_path)
-                return
-            except Exception:
-                pass
-        self._train_initial_model()
-
-    def _train_initial_model(self):
-        import numpy as np
-        from sklearn.ensemble import IsolationForest
-
-        np.random.seed(42)
-        n_normal = 1000
-        normal_data = np.column_stack([
-            np.random.lognormal(7, 1, n_normal),   # amount in Rupees (e.g. ₹100 - ₹5,000)
-            np.random.randint(6, 23, n_normal),    # hour
-            np.random.randint(0, 7, n_normal),     # day_of_week
-            np.random.randint(1, 5, n_normal),     # merchant_category (1-4)
-            np.random.poisson(1, n_normal),        # txn_count_1h
-            np.random.poisson(10, n_normal),       # txn_count_24h
-            np.random.normal(0, 1, n_normal),      # amount_zscore
-            np.random.randint(0, 2, n_normal),     # is_new_recipient
-        ])
-
-        self.model = IsolationForest(contamination=0.05, random_state=42, n_estimators=100)
-        self.model.fit(normal_data)
-
-        import os
-        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
-        self._joblib.dump(self.model, self.model_path)
-
-    def predict(self, features) -> float:
-        if self.model is None:
-            return 0.0
-        try:
-            score = self.model.score_samples(features.reshape(1, -1))[0]
-            normalized = max(0, min(1, (0.5 - score) / 0.5))
-            return normalized * 30
-        except Exception:
-            return 0.0
-
-    def extract_features(self, ctx: TransactionContext):
-        import numpy as np
-
-        amount_inr = ctx.amount / 100.0
-        median_inr = (ctx.median_amount / 100.0) if ctx.median_amount else 0.0
-        avg_inr = (ctx.avg_amount / 100.0) if ctx.avg_amount else 0.0
-
-        amount_zscore = 0.0
-        if median_inr > 0 and avg_inr > 0:
-            amount_zscore = (amount_inr - median_inr) / max(avg_inr * 0.5, 1.0)
-
-        return np.array([
-            amount_inr,
-            ctx.hour,
-            ctx.day_of_week,
-            1,
-            ctx.txn_count_1h,
-            ctx.txn_count_24h,
-            amount_zscore,
-            1 if ctx.is_new_recipient else 0,
-        ])
 
 
 class RiskAggregator:
