@@ -67,6 +67,9 @@ export interface RiskPrecheckResult {
   risk_action: RiskAction
   reasons: RiskReason[]
   recommended_action: string
+  human_explanation?: string | null
+  explanation?: string | null
+  model_version?: string
   category_scores?: CategoryScores
   explanation_data?: Record<string, unknown>
 }

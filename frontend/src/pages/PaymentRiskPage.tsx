@@ -11,6 +11,7 @@ import { merchantsApi } from '../features/merchants/merchantsService'
 import { riskApi } from '../features/risk/riskService'
 import { paymentsApi } from '../features/payments/paymentsService'
 import RiskScoreGauge from '../components/RiskScoreGauge'
+import RiskResultCard from '../components/RiskResultCard'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Label } from '../components/ui/Label'
@@ -878,158 +879,20 @@ export default function PaymentRiskPage() {
       )}
 
       {/* Step 2: Risk Result */}
-      {result && riskConfig && (
+      {result && (
         <div className="space-y-4 animate-fade-in-up">
-          {/* Risk Score Card */}
-          <Card className={cn('rounded-2xl border-0 shadow-xl overflow-hidden')}>
-            {/* Gradient header */}
-            <div className={cn('h-2 bg-gradient-to-r', riskConfig.gradient)} />
-            <CardContent className="pt-8 pb-6 space-y-6">
-              {/* Gauge */}
-              <div className="flex justify-center">
-                <div className="risk-gauge-container">
-                  <RiskScoreGauge score={result.risk_score} level={result.risk_level} size="lg" />
-                </div>
-              </div>
-
-              {/* Risk level badge + context */}
-              <div className={cn('rounded-xl p-4 text-center', riskConfig.bg, riskConfig.border, 'border')}>
-                <div className={cn('inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-bold mb-2', riskConfig.badge)}>
-                  <riskConfig.icon className="h-4 w-4" />
-                  {riskConfig.label}
-                </div>
-                <p className={cn('text-sm font-medium', riskConfig.text)}>{riskConfig.message}</p>
-                {result.recommended_action && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Recommended: {result.recommended_action}
-                  </p>
-                )}
-              </div>
-
-              {/* AI Explanation */}
-              {aiLoading ? (
-                <div className="rounded-xl bg-primary/5 border border-primary/10 p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Bot className="h-4 w-4 text-primary animate-pulse" />
-                    <p className="text-sm font-semibold text-primary">AI is analysing...</p>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="h-3 rounded shimmer" />
-                    <div className="h-3 w-4/5 rounded shimmer" />
-                  </div>
-                </div>
-              ) : explanation ? (
-                <div className="rounded-xl bg-gradient-to-br from-primary/5 to-primary/10 border border-primary/15 p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Bot className="h-4 w-4 text-primary" />
-                    <p className="text-sm font-bold text-primary">AI Explanation</p>
-                  </div>
-                  <p className="text-sm text-foreground leading-relaxed">{explanation}</p>
-                  {recommendation && (
-                    <div className="mt-3 flex items-center gap-2 pt-3 border-t border-primary/10">
-                      <ArrowRight className="h-3.5 w-3.5 text-primary flex-shrink-0" />
-                      <p className="text-xs font-semibold text-primary">{recommendation}</p>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="rounded-xl bg-gray-50 border p-4">
-                  <p className="text-sm text-muted-foreground">AI explanation unavailable. Showing structured risk signals below.</p>
-                </div>
-              )}
-
-              {/* Risk Reasons */}
-              {result.reasons.length > 0 && (
-                <div>
-                  <p className="text-sm font-bold mb-3 text-foreground">Why this was flagged</p>
-                  <div className="space-y-2">
-                    {result.reasons.map((r) => (
-                      <div
-                        key={r.signal_name}
-                        className={cn(
-                          'flex items-start gap-3 rounded-xl p-3 text-sm',
-                          r.severity === 'HIGH' ? 'bg-red-50 border border-red-100' :
-                          r.severity === 'MEDIUM' ? 'bg-amber-50 border border-amber-100' :
-                          'bg-gray-50 border border-gray-100',
-                        )}
-                      >
-                        <span className={cn(
-                          'mt-0.5 h-2 w-2 rounded-full flex-shrink-0',
-                          r.severity === 'HIGH' ? 'bg-red-500' :
-                          r.severity === 'MEDIUM' ? 'bg-amber-500' : 'bg-gray-400',
-                        )} />
-                        <div className="flex-1">
-                          <span className={cn(
-                            'font-medium text-xs uppercase tracking-wide',
-                            r.severity === 'HIGH' ? 'text-red-600' :
-                            r.severity === 'MEDIUM' ? 'text-amber-600' : 'text-gray-500',
-                          )}>
-                            {r.severity}
-                          </span>
-                          <p className="text-foreground mt-0.5">{r.reason}</p>
-                        </div>
-                        <span className="text-xs text-muted-foreground font-mono">+{r.score_impact}pts</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {result.reasons.length === 0 && (
-                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4 flex items-center gap-3">
-                  <CheckCircle className="h-4 w-4 text-emerald-600 flex-shrink-0" />
-                  <p className="text-sm text-emerald-800">No specific risk signals detected. Payment appears normal.</p>
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div className="flex gap-3 pt-2">
-                <Button variant="outline" className="flex-1 h-11" onClick={onCancel}>
-                  <X className="h-4 w-4" />
-                  Cancel
-                </Button>
-                {riskConfig.isBlocked ? (
-                  <Button
-                    disabled
-                    className="flex-1 h-11 font-bold bg-rose-100 text-rose-700 border border-rose-300 cursor-not-allowed opacity-80"
-                  >
-                    <AlertTriangle className="h-4 w-4 mr-1.5" />
-                    Transaction Blocked
-                  </Button>
-                ) : (
-                  <Button
-                    className={cn(
-                      'flex-1 h-11 font-semibold',
-                      result.risk_level === 'HIGH' ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-md' :
-                      result.risk_level === 'MEDIUM' ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-md' :
-                      'btn-primary-gradient',
-                    )}
-                    onClick={onContinue}
-                    loading={processing}
-                  >
-                    <ArrowRight className="h-4 w-4" />
-                    {riskConfig.buttonLabel}
-                  </Button>
-                )}
-              </div>
-
-              {result.risk_level === 'CRITICAL' && (
-                <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-center">
-                  <p className="text-xs text-rose-800 font-bold">
-                    ⛔ CRITICAL RISK (Score {result.risk_score}/100): Payment is permanently blocked by security policy.
-                  </p>
-                </div>
-              )}
-
-              {result.risk_level === 'HIGH' && (
-                <div className="rounded-xl bg-orange-50 border border-orange-200 p-3 text-center">
-                  <p className="text-xs text-orange-900 font-medium">
-                    ⏸️ HOLD FOR REVIEW (Score {result.risk_score}/100): Direct capture is disabled. Submitting will send this transaction to the compliance review queue.
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <RiskResultCard
+            result={result}
+            isLoading={checking}
+            error={error}
+            onRetry={handleSubmit(onPrecheck)}
+            onCancel={onCancel}
+            onContinue={onContinue}
+            isProcessing={processing}
+            aiExplanation={explanation}
+            aiRecommendation={recommendation}
+            isAiLoading={aiLoading}
+          />
         </div>
       )}
     </div>
