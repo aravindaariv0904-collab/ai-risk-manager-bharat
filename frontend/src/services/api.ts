@@ -1,9 +1,13 @@
 import { supabase } from './supabase'
+import { getDemoSession } from './demoSession'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 class ApiClient {
   private async getAccessToken(): Promise<string | null> {
+    const demo = getDemoSession()
+    if (demo?.token) return demo.token
+
     const { data } = await supabase.auth.getSession()
     return data.session?.access_token ?? null
   }
