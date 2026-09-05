@@ -4,6 +4,7 @@ import {
   ShieldCheck, Lock, Mail, User, Eye, EyeOff,
 } from 'lucide-react'
 import { supabase } from '../services/supabase'
+import { setDemoSession } from '../services/demoSession'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Label } from '../components/ui/Label'
@@ -214,6 +215,37 @@ export default function AuthPage() {
               {mode === 'login' ? 'Sign In Securely' : 'Create Account'}
             </Button>
           </form>
+
+          {/* Quick 1-Click Demo Login Bar */}
+          <div className="pt-3 border-t space-y-2.5">
+            <p className="text-[11px] font-semibold text-center text-muted-foreground uppercase tracking-wider">
+              Explore Without Credentials
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDemoSession('merchant')
+                  window.location.href = '/vendor'
+                }}
+                className="flex items-center justify-center gap-2 rounded-xl bg-emerald-50 border border-emerald-200 py-2.5 px-3 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition-colors shadow-sm"
+              >
+                <span className="text-base">🏪</span>
+                Merchant Portal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDemoSession('citizen')
+                  window.location.href = '/'
+                }}
+                className="flex items-center justify-center gap-2 rounded-xl bg-primary/5 border border-primary/20 py-2.5 px-3 text-xs font-bold text-primary hover:bg-primary/10 transition-colors shadow-sm"
+              >
+                <span className="text-base">👤</span>
+                Citizen Payer
+              </button>
+            </div>
+          </div>
 
           <p className="text-center text-xs text-muted-foreground pb-4">
             AI Risk Manager for Bharat · Detect · Score · Explain · Verify · Act
