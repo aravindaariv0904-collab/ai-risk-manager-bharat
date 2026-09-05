@@ -122,6 +122,7 @@ class CreateOrderRequest(BaseModel):
     amount: int = Field(gt=0, lt=2**40)
     currency: str = "INR"
     merchant_id: UUID
+    transaction_id: Optional[UUID] = None
     payment_method: Optional[str] = None
 
 
@@ -131,6 +132,21 @@ class CreateOrderResponse(BaseModel):
     currency: str
     key_id: str
     receipt: Optional[str] = None
+
+
+class VerifyPaymentRequest(BaseModel):
+    razorpay_payment_id: str
+    razorpay_order_id: str
+    razorpay_signature: str
+    transaction_id: Optional[UUID] = None
+
+
+class VerifyPaymentResponse(BaseModel):
+    verified: bool
+    status: str
+    payment_id: str
+    order_id: str
+    message: str
 
 
 class PaymentStatusResponse(BaseModel):

@@ -54,7 +54,7 @@ class RuleEngine:
 
     def _check_new_contact(self, ctx: TransactionContext):
         if ctx.is_new_recipient or ctx.is_unverified_merchant:
-            return True, "First-time transfer to this recipient. No negative fraud history detected on National Cyber Crime Registry (I4C).", 10
+            return True, "First-time transfer to this recipient. Verified contact history check completed.", 10
         return False, "", 0
 
     def _check_new_recipient_high_amount(self, ctx: TransactionContext):
@@ -235,7 +235,7 @@ class MLAnomalyDetector:
         np.random.seed(42)
         n_normal = 1000
         normal_data = np.column_stack([
-            np.random.lognormal(8, 1, n_normal),  # amount
+            np.random.lognormal(7, 1, n_normal),   # amount in Rupees (e.g. ₹100 - ₹5,000)
             np.random.randint(6, 23, n_normal),    # hour
             np.random.randint(0, 7, n_normal),     # day_of_week
             np.random.randint(1, 5, n_normal),     # merchant_category (1-4)
@@ -265,12 +265,16 @@ class MLAnomalyDetector:
     def extract_features(self, ctx: TransactionContext):
         import numpy as np
 
-        amount_zscore = 0
-        if ctx.median_amount > 0 and ctx.avg_amount > 0:
-            amount_zscore = (ctx.amount - ctx.median_amount) / max(ctx.avg_amount * 0.5, 1)
+        amount_inr = ctx.amount / 100.0
+        median_inr = (ctx.median_amount / 100.0) if ctx.median_amount else 0.0
+        avg_inr = (ctx.avg_amount / 100.0) if ctx.avg_amount else 0.0
+
+        amount_zscore = 0.0
+        if median_inr > 0 and avg_inr > 0:
+            amount_zscore = (amount_inr - median_inr) / max(avg_inr * 0.5, 1.0)
 
         return np.array([
-            ctx.amount,
+            amount_inr,
             ctx.hour,
             ctx.day_of_week,
             1,

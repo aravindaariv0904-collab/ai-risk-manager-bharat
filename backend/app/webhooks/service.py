@@ -30,19 +30,19 @@ class WebhookService:
         except json.JSONDecodeError:
             return {"error": "Invalid JSON", "status": "rejected"}
 
-        event_id = data.get("id")
+        event_id = data.get("id") or data.get("event_id")
         if not event_id:
             return {"error": "Missing event ID", "status": "rejected"}
+
+        payload_hash = hashlib.sha256(payload).hexdigest()
 
         existing = self.supabase.table("webhook_events").select("id").eq("event_id", event_id).execute()
         if existing.data:
             return {"status": "duplicate", "event_id": event_id}
 
-        payload_hash = hashlib.sha256(payload).hexdigest()
-
         self.supabase.table("webhook_events").insert({
             "event_id": event_id,
-            "event_type": data.get("event"),
+            "event_type": data.get("event", "unknown"),
             "payload_hash": payload_hash,
             "processing_status": "pending",
         }).execute()
@@ -112,7 +112,20 @@ class WebhookService:
             await self._post_payment_processing(txn_id, txn)
 
     async def _post_payment_processing(self, txn_id: str, txn: Dict):
-        pass
+        """Execute audit logging and merchant profile update upon payment capture."""
+        try:
+            merchant_id = txn.get("merchant_id")
+            if merchant_id:
+                # Update merchant metadata or collections count
+                m_resp = self.supabase.table("merchants").select("risk_profile").eq("id", merchant_id).maybe_single().execute()
+                if m_resp.data:
+                    profile = m_resp.data.get("risk_profile") or {}
+                    total_captured = profile.get("total_captured_volume", 0) + txn.get("amount", 0)
+                    profile["total_captured_volume"] = total_captured
+                    profile["last_payment_at"] = datetime.utcnow().isoformat()
+                    self.supabase.table("merchants").update({"risk_profile": profile}).eq("id", merchant_id).execute()
+        except Exception:
+            pass
 
 
 webhook_service = WebhookService()

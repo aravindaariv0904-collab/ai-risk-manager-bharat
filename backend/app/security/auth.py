@@ -1,7 +1,8 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
+import time
 import httpx
 import structlog
 
@@ -12,7 +13,8 @@ security = HTTPBearer(auto_error=False)
 logger = structlog.get_logger()
 
 JWKS_CACHE: Optional[Dict] = None
-_role_cache: Dict[str, str] = {}
+# Cache user roles with (role, expires_at) TTL of 60 seconds
+_role_cache: Dict[str, Tuple[str, float]] = {}
 
 # Demo user IDs mapped to roles
 DEMO_USERS: Dict[str, Dict[str, Any]] = {
@@ -86,27 +88,18 @@ async def verify_token(
         logger.warning("JWKS token verification failed", error=str(e))
 
     # 2. Secondary: Verify via Supabase JWT Secret (HS256)
-    try:
-        payload = jwt.decode(
-            token,
-            settings.SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            audience="authenticated",
-            options={"verify_exp": True},
-        )
-        return payload
-    except JWTError:
-        pass
-
-    # 3. Fallback: Parse claims if token is unexpired and authenticated
-    try:
-        import time
-        claims = jwt.get_unverified_claims(token)
-        if claims and claims.get("aud") == "authenticated" and claims.get("sub"):
-            if claims.get("exp", 0) > time.time():
-                return claims
-    except Exception:
-        pass
+    if settings.SUPABASE_JWT_SECRET and not settings.SUPABASE_JWT_SECRET.endswith("placeholder"):
+        try:
+            payload = jwt.decode(
+                token,
+                settings.SUPABASE_JWT_SECRET,
+                algorithms=["HS256"],
+                audience="authenticated",
+                options={"verify_exp": True},
+            )
+            return payload
+        except JWTError:
+            pass
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -125,9 +118,11 @@ async def get_current_user_id(payload: Dict = Depends(verify_token)) -> str:
 async def get_current_user_role(
     user_id: str = Depends(get_current_user_id),
 ) -> str:
-    """Look up role from users table — not from JWT which doesn't carry it reliably."""
-    if user_id in _role_cache:
-        return _role_cache[user_id]
+    """Look up role from users table with a 60-second TTL cache."""
+    now = time.time()
+    cached = _role_cache.get(user_id)
+    if cached and cached[1] > now:
+        return cached[0]
 
     try:
         from app.services.supabase_client import get_supabase_admin
@@ -135,7 +130,7 @@ async def get_current_user_role(
         resp = supabase.table("users").select("role").eq("auth_user_id", user_id).maybe_single().execute()
         if resp.data:
             role = resp.data.get("role", "citizen")
-            _role_cache[user_id] = role
+            _role_cache[user_id] = (role, now + 60.0)
             return role
     except Exception as e:
         logger.warning("Role lookup failed", error=str(e))

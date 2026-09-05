@@ -15,6 +15,7 @@ def make_context(**overrides) -> TransactionContext:
         hour=12,
         day_of_week=2,
         is_new_recipient=False,
+        is_unverified_merchant=False,
         txn_count_1h=0,
         txn_count_24h=5,
         txn_count_7d=20,

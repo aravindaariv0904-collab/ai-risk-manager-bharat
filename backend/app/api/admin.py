@@ -28,6 +28,7 @@ async def admin_dashboard(
     high = supabase.table("transactions").select("id", count="exact").eq("risk_level", "HIGH").execute()
     suspicious = supabase.table("transactions").select("id", count="exact").eq("risk_level", "HIGH").execute()
     verified = supabase.table("transactions").select("id", count="exact").eq("status", "captured").execute()
+    unverified = supabase.table("transactions").select("id", count="exact").neq("status", "captured").execute()
 
     return AdminDashboardResponse(
         total_transactions=total.count or 0,
@@ -36,7 +37,7 @@ async def admin_dashboard(
         high_risk=high.count or 0,
         suspicious_count=suspicious.count or 0,
         verified_payments=verified.count or 0,
-        unverified_claims=0,
+        unverified_claims=unverified.count or 0,
     )
 
 

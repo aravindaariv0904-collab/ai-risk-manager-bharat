@@ -91,24 +91,30 @@ Recommendation: [one clear action sentence]"""
         response = await model.generate_content_async(prompt)
         text = response.text.strip()
 
+        import re
         explanation = ""
         recommendation = ""
-        for line in text.split("\n"):
-            stripped = line.strip()
-            if stripped.startswith("Explanation:"):
-                explanation = stripped.replace("Explanation:", "").strip()
-            elif stripped.startswith("Recommendation:"):
-                recommendation = stripped.replace("Recommendation:", "").strip()
 
-        if explanation and recommendation:
+        exp_match = re.search(r"(?i)(?:\*\*|\#\#)?\s*Explanation\s*(?:\*\*|\#\#)?\s*:\s*(.+?)(?=(?:\*\*|\#\#)?\s*Recommendation|\Z)", text, re.DOTALL)
+        if exp_match:
+            explanation = exp_match.group(1).strip()
+
+        rec_match = re.search(r"(?i)(?:\*\*|\#\#)?\s*Recommendation\s*(?:\*\*|\#\#)?\s*:\s*(.+)", text, re.DOTALL)
+        if rec_match:
+            recommendation = rec_match.group(1).strip()
+
+        if not explanation and not recommendation:
+            for line in text.split("\n"):
+                stripped = line.strip()
+                if stripped.lower().startswith("explanation:"):
+                    explanation = stripped[12:].strip()
+                elif stripped.lower().startswith("recommendation:"):
+                    recommendation = stripped[15:].strip()
+
+        if explanation:
+            if not recommendation:
+                recommendation = RECOMMENDATIONS.get(level_key, RECOMMENDATIONS["MEDIUM"]).get(request.language, RECOMMENDATIONS["MEDIUM"][Language.EN])
             return ExplainRiskResponse(explanation=explanation, recommendation=recommendation)
-
-        # If parsing failed, return the whole response as explanation
-        if text:
-            return ExplainRiskResponse(
-                explanation=text[:500],
-                recommendation=RECOMMENDATIONS.get(level_key, RECOMMENDATIONS["MEDIUM"]).get(request.language, RECOMMENDATIONS["MEDIUM"][Language.EN]),
-            )
         raise ValueError("Empty Gemini response")
 
     except Exception as e:

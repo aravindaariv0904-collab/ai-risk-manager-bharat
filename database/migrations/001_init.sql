@@ -26,11 +26,16 @@ CREATE TABLE IF NOT EXISTS merchants (
     user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     business_name TEXT NOT NULL,
     business_category TEXT,
+    phone TEXT,
+    upi_id TEXT,
+    is_verified BOOLEAN NOT NULL DEFAULT false,
     risk_profile JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_merchants_user_id ON merchants(user_id);
+CREATE INDEX IF NOT EXISTS idx_merchants_phone ON merchants(phone);
+CREATE INDEX IF NOT EXISTS idx_merchants_upi_id ON merchants(upi_id);
 
 -- ---------- TRANSACTIONS ----------
 CREATE TABLE IF NOT EXISTS transactions (
@@ -224,3 +229,16 @@ CREATE POLICY feedback_select ON feedback
 DROP POLICY IF EXISTS webhook_events_admin ON webhook_events;
 CREATE POLICY webhook_events_admin ON webhook_events
     FOR ALL USING (false);
+
+-- Admin Global Access Policies
+DROP POLICY IF EXISTS admin_users_select ON users;
+CREATE POLICY admin_users_select ON users
+    FOR SELECT USING (EXISTS (SELECT 1 FROM users u WHERE u.auth_user_id = auth.uid() AND u.role = 'admin'));
+
+DROP POLICY IF EXISTS admin_transactions_select ON transactions;
+CREATE POLICY admin_transactions_select ON transactions
+    FOR SELECT USING (EXISTS (SELECT 1 FROM users u WHERE u.auth_user_id = auth.uid() AND u.role = 'admin'));
+
+DROP POLICY IF EXISTS admin_merchants_select ON merchants;
+CREATE POLICY admin_merchants_select ON merchants
+    FOR SELECT USING (EXISTS (SELECT 1 FROM users u WHERE u.auth_user_id = auth.uid() AND u.role = 'admin'));
