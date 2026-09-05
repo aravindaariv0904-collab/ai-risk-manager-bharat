@@ -82,6 +82,8 @@ class RiskPrecheckResponse(BaseModel):
     risk_action: RiskAction
     reasons: List[RiskReason] = Field(default_factory=list)
     recommended_action: str
+    explanation: Optional[str] = None
+    human_explanation: Optional[str] = None
     category_scores: Optional[CategoryScores] = None
     explanation_data: Optional[Dict] = None
     model_version: str = "v2.0"
@@ -94,6 +96,8 @@ class RiskDecisionResponse(BaseModel):
     level: RiskLevel
     action: RiskAction
     explanation: Optional[str] = None
+    human_explanation: Optional[str] = None
+    recommended_action: Optional[str] = None
     model_version: str = "v2.0"
     reasons: List[RiskReason] = Field(default_factory=list)
     category_scores: Optional[CategoryScores] = None

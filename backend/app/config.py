@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     DEMO_USER_EMAIL: str = "user@example.com"
     DEMO_VENDOR_EMAIL: str = "vendor@example.com"
 
+    # Configurable Risk Policy Thresholds
+    RISK_THRESHOLD_LOW_MAX: int = 30
+    RISK_THRESHOLD_MEDIUM_MAX: int = 60
+    RISK_THRESHOLD_HIGH_MAX: int = 80
+    RISK_THRESHOLD_CRITICAL_MAX: int = 100
+
     def get_cors_origins(self) -> List[str]:
         """Parse CORS_ORIGINS string into a list."""
         v = self.CORS_ORIGINS

@@ -2,15 +2,19 @@ from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import math
+import structlog
 
 from app.models import RiskLevel, RiskAction, SignalSeverity
 from app.schemas import RiskReason, CategoryScores, CompositeRiskOutput
+from app.config import settings
 from app.risk.ml_pipeline import (
     MLAnomalyDetector,
     CanonicalFeaturePipeline,
     CANONICAL_FEATURE_NAMES,
     CANONICAL_MODEL_VERSION,
 )
+
+logger = structlog.get_logger()
 
 # ---------------------------------------------------------------------------
 # Signal Category Constants & Caps
@@ -64,7 +68,8 @@ class TransactionContext:
 class CompositeRiskResult:
     """
     Composite risk evaluation output containing the final score (0-100),
-    risk level, decision, signals, category breakdown, and explanation context.
+    risk level, decision, signals, category breakdown, recommended action,
+    and human explanation.
     Supports unpacking as a tuple for flexible integration.
     """
     def __init__(
@@ -75,6 +80,8 @@ class CompositeRiskResult:
         signals: List[RiskReason],
         category_scores: CategoryScores,
         explanation_data: Dict,
+        recommended_action: Optional[str] = None,
+        human_explanation: Optional[str] = None,
     ):
         self.score = score
         self.level = level
@@ -84,6 +91,29 @@ class CompositeRiskResult:
         self.reasons = signals   # alias for backward compat
         self.category_scores = category_scores
         self.explanation_data = explanation_data
+        self.recommended_action = recommended_action or self._default_recommendation(decision)
+        self.human_explanation = human_explanation or self._default_human_explanation(score, level, decision)
+        self.explanation = self.human_explanation  # alias
+
+    def _default_recommendation(self, decision: RiskAction) -> str:
+        mapping = {
+            RiskAction.ALLOW: "Allow payment to proceed directly.",
+            RiskAction.STEP_UP_VERIFICATION: "Perform step-up verification (OTP / recipient confirm) before proceeding.",
+            RiskAction.HOLD_FOR_REVIEW: "Hold payment for manual risk and compliance review.",
+            RiskAction.BLOCK: "Block payment immediately to protect user from unauthorized loss.",
+        }
+        return mapping.get(decision, "Review risk signals before proceeding.")
+
+    def _default_human_explanation(self, score: int, level: RiskLevel, decision: RiskAction) -> str:
+        if decision == RiskAction.ALLOW:
+            return f"Low risk score ({score}/100). The payment matches safe behavioral baseline."
+        elif decision == RiskAction.STEP_UP_VERIFICATION:
+            return f"Medium risk score ({score}/100). First-time recipient or unusual parameter detected; step-up verification required."
+        elif decision == RiskAction.HOLD_FOR_REVIEW:
+            return f"High risk score ({score}/100). Multiple anomalous patterns detected; payment is placed on hold for review."
+        elif decision == RiskAction.BLOCK:
+            return f"Critical risk score ({score}/100). Severe anomaly and fraud signals detected; payment blocked."
+        return f"Payment evaluated with risk score {score}/100 ({level.value})."
 
     def __iter__(self):
         yield self.score
@@ -98,6 +128,9 @@ class CompositeRiskResult:
             "score": self.score,
             "level": self.level.value if hasattr(self.level, "value") else str(self.level),
             "decision": self.decision.value if hasattr(self.decision, "value") else str(self.decision),
+            "recommended_action": self.recommended_action,
+            "human_explanation": self.human_explanation,
+            "explanation": self.explanation,
             "signals": [s.model_dump() if hasattr(s, "model_dump") else s for s in self.signals],
             "category_scores": self.category_scores.model_dump() if hasattr(self.category_scores, "model_dump") else self.category_scores,
             "explanation_data": self.explanation_data,
@@ -352,8 +385,8 @@ class BehavioralBaseline:
 # ---------------------------------------------------------------------------
 class RiskAggregator:
     """
-    Defensible 0-100 Composite Risk Aggregator with Independent Dimensions
-    and Anti-Stacking controls.
+    Defensible 0-100 Composite Risk Aggregator with Independent Dimensions,
+    Configurable Thresholds, Structured Logging, and Anti-Stacking controls.
 
     Dimension Allocations:
       - Identity / Trust:       0 to 25
@@ -363,19 +396,12 @@ class RiskAggregator:
       - ML Anomaly:             0 to 10
       Total Maximum = 100
 
-    Thresholds:
+    Thresholds (Configurable via Settings):
       - 0  to 30:  LOW      -> ALLOW
       - 31 to 60:  MEDIUM   -> STEP_UP_VERIFICATION
       - 61 to 80:  HIGH     -> HOLD_FOR_REVIEW
       - 81 to 100: CRITICAL -> BLOCK
     """
-
-    THRESHOLDS = {
-        "LOW": (0, 30),
-        "MEDIUM": (31, 60),
-        "HIGH": (61, 80),
-        "CRITICAL": (81, 100),
-    }
 
     ACTIONS = {
         RiskLevel.LOW: RiskAction.ALLOW,
@@ -383,6 +409,27 @@ class RiskAggregator:
         RiskLevel.HIGH: RiskAction.HOLD_FOR_REVIEW,
         RiskLevel.CRITICAL: RiskAction.BLOCK,
     }
+
+    def __init__(
+        self,
+        low_max: Optional[int] = None,
+        medium_max: Optional[int] = None,
+        high_max: Optional[int] = None,
+        critical_max: Optional[int] = None,
+    ):
+        self.low_max = low_max if low_max is not None else settings.RISK_THRESHOLD_LOW_MAX
+        self.medium_max = medium_max if medium_max is not None else settings.RISK_THRESHOLD_MEDIUM_MAX
+        self.high_max = high_max if high_max is not None else settings.RISK_THRESHOLD_HIGH_MAX
+        self.critical_max = critical_max if critical_max is not None else settings.RISK_THRESHOLD_CRITICAL_MAX
+
+    @property
+    def thresholds(self) -> Dict[str, Tuple[int, int]]:
+        return {
+            "LOW": (0, self.low_max),
+            "MEDIUM": (self.low_max + 1, self.medium_max),
+            "HIGH": (self.medium_max + 1, self.high_max),
+            "CRITICAL": (self.high_max + 1, self.critical_max),
+        }
 
     def aggregate(
         self,
@@ -446,12 +493,12 @@ class RiskAggregator:
             cat_identity + cat_txn + cat_beh + cat_vel + cat_ml + hist_contrib
         )
 
-        # Determine Risk Level & Action
-        if total_score <= 30:
+        # Determine Risk Level & Action using configurable thresholds
+        if total_score <= self.low_max:
             level = RiskLevel.LOW
-        elif total_score <= 60:
+        elif total_score <= self.medium_max:
             level = RiskLevel.MEDIUM
-        elif total_score <= 80:
+        elif total_score <= self.high_max:
             level = RiskLevel.HIGH
         else:
             level = RiskLevel.CRITICAL
@@ -478,14 +525,34 @@ class RiskAggregator:
 
         anti_stacking_applied = len(txn_signals) > 1 or (len(vel_signals) > 1 and sum(r.score_impact for r in vel_signals) > 15)
 
+        recommended_action = self._get_recommended_action(decision)
+        human_explanation = self._get_human_explanation(total_score, level, decision, primary_driver, all_signals)
+
         explanation_data = {
             "primary_risk_driver": primary_driver,
             "anti_stacking_applied": anti_stacking_applied,
             "dimension_caps": CATEGORY_MAX_SCORES,
+            "threshold_config": {
+                "low_max": self.low_max,
+                "medium_max": self.medium_max,
+                "high_max": self.high_max,
+                "critical_max": self.critical_max,
+            },
             "raw_ml_score": ml_score,
             "historical_risk_factor": hist_contrib,
             "context_summary": context_summary or {},
         }
+
+        # Structured Decision Logging (Requirement 6)
+        logger.info(
+            "Risk policy decision evaluated",
+            score=total_score,
+            level=level.value,
+            decision=decision.value,
+            primary_driver=primary_driver,
+            signals_count=len(all_signals),
+            recommended_action=recommended_action,
+        )
 
         return CompositeRiskResult(
             score=total_score,
@@ -494,7 +561,37 @@ class RiskAggregator:
             signals=all_signals,
             category_scores=category_scores,
             explanation_data=explanation_data,
+            recommended_action=recommended_action,
+            human_explanation=human_explanation,
         )
+
+    def _get_recommended_action(self, decision: RiskAction) -> str:
+        rec_map = {
+            RiskAction.ALLOW: "Allow transaction to proceed.",
+            RiskAction.STEP_UP_VERIFICATION: "Perform step-up verification (OTP/recipient confirm) before proceeding.",
+            RiskAction.HOLD_FOR_REVIEW: "Hold transaction for manual compliance review.",
+            RiskAction.BLOCK: "Block transaction immediately to prevent fraudulent transfer.",
+        }
+        return rec_map.get(decision, "Review risk signals before proceeding.")
+
+    def _get_human_explanation(
+        self,
+        score: int,
+        level: RiskLevel,
+        decision: RiskAction,
+        primary_driver: str,
+        signals: List[RiskReason],
+    ) -> str:
+        driver_desc = primary_driver.replace("_", " ") if primary_driver != "none" else ""
+        if decision == RiskAction.ALLOW:
+            return f"Low risk score ({score}/100). All payment indicators are within safe baseline."
+        elif decision == RiskAction.STEP_UP_VERIFICATION:
+            return f"Medium risk score ({score}/100). Elevated risk in {driver_desc}; secondary verification required before payment."
+        elif decision == RiskAction.HOLD_FOR_REVIEW:
+            return f"High risk score ({score}/100). Multiple anomalous patterns detected ({driver_desc}); payment is held for review."
+        elif decision == RiskAction.BLOCK:
+            return f"Critical risk score ({score}/100). High fraud indicators detected ({driver_desc}); transaction is blocked."
+        return f"Risk evaluated with score {score}/100 ({level.value})."
 
 
 # ---------------------------------------------------------------------------

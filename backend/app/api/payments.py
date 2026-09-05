@@ -40,6 +40,41 @@ async def create_order(
 
     receipt = f"pay_{payer_id[:8]}_{str(request.merchant_id)[:8]}"
 
+    # Backend is source of truth: Verify transaction risk policy before creating payment order
+    if request.transaction_id:
+        txn_check = (
+            supabase.table("transactions")
+            .select("id, risk_action, risk_score, risk_level")
+            .eq("id", str(request.transaction_id))
+            .maybe_single()
+            .execute()
+        )
+        if txn_check.data:
+            risk_act = txn_check.data.get("risk_action")
+            risk_score = txn_check.data.get("risk_score") or 0
+            if risk_act == "BLOCK" or risk_score > settings.RISK_THRESHOLD_HIGH_MAX:
+                logger.warning(
+                    "Blocked order creation attempt",
+                    transaction_id=str(request.transaction_id),
+                    risk_score=risk_score,
+                    payer_id=payer_id,
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="Payment creation blocked by risk engine security policy (Critical Risk).",
+                )
+            if risk_act == "HOLD_FOR_REVIEW":
+                logger.warning(
+                    "Held order creation attempt without manual approval",
+                    transaction_id=str(request.transaction_id),
+                    risk_score=risk_score,
+                    payer_id=payer_id,
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="Payment is currently held for manual review and cannot be processed directly.",
+                )
+
     # In demo mode with placeholder keys, return a mock order
     if settings.RAZORPAY_KEY_ID.endswith("placeholder"):
         import uuid

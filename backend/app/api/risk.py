@@ -77,6 +77,7 @@ async def risk_precheck(
         "score": eval_res.score,
         "level": eval_res.level.value,
         "action": eval_res.decision.value,
+        "explanation": eval_res.human_explanation,
         "category_scores": eval_res.category_scores.model_dump(),
         "explanation_data": eval_res.explanation_data,
         "model_version": "v2.0",
@@ -90,7 +91,9 @@ async def risk_precheck(
         reasons=eval_res.signals,
         category_scores=eval_res.category_scores,
         explanation_data=eval_res.explanation_data,
-        recommended_action=eval_res.decision.value.replace("_", " ").title(),
+        recommended_action=eval_res.recommended_action,
+        explanation=eval_res.human_explanation,
+        human_explanation=eval_res.human_explanation,
         model_version="v2.0",
     )
 
@@ -133,6 +136,8 @@ async def get_risk_decision(
         level=RiskLevel(decision["level"]),
         action=RiskAction(decision["action"]),
         explanation=decision.get("explanation"),
+        human_explanation=decision.get("explanation"),
+        recommended_action=decision.get("action", "").replace("_", " ").title(),
         category_scores=cat_scores,
         explanation_data=decision.get("explanation_data"),
         model_version=decision.get("model_version", "v2.0"),

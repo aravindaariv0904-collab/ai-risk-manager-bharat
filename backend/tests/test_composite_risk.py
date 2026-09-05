@@ -178,6 +178,97 @@ class TestCompositeRiskThresholds:
         assert res.score == score
         assert res.level == expected_level
         assert res.decision == expected_decision
+        assert res.recommended_action is not None
+        assert res.human_explanation is not None
+
+    def test_exact_boundary_30_is_low_allow(self):
+        aggregator = RiskAggregator()
+        signals = [
+            RiskReason(signal_name="id_unverified", category="identity_trust", reason="Unverified", severity=SignalSeverity.MEDIUM, score_impact=15),
+            RiskReason(signal_name="beh_hour", category="behavioral_anomaly", reason="Late hour", severity=SignalSeverity.MEDIUM, score_impact=15),
+        ]
+        res = aggregator.aggregate(signals)
+        assert res.score == 30
+        assert res.level == RiskLevel.LOW
+        assert res.decision == RiskAction.ALLOW
+        assert "Allow" in res.recommended_action
+
+    def test_exact_boundary_31_is_medium_step_up(self):
+        aggregator = RiskAggregator()
+        signals = [
+            RiskReason(signal_name="id_unverified", category="identity_trust", reason="Unverified", severity=SignalSeverity.MEDIUM, score_impact=15),
+            RiskReason(signal_name="beh_hour", category="behavioral_anomaly", reason="Late hour", severity=SignalSeverity.MEDIUM, score_impact=15),
+        ]
+        res = aggregator.aggregate(signals, ml_score=3.0)  # +1 ML contribution -> 31
+        assert res.score == 31
+        assert res.level == RiskLevel.MEDIUM
+        assert res.decision == RiskAction.STEP_UP_VERIFICATION
+        assert "verification" in res.recommended_action.lower()
+
+    def test_exact_boundary_60_is_medium_step_up(self):
+        aggregator = RiskAggregator()
+        signals = [
+            RiskReason(signal_name="id_1", category="identity_trust", reason="New unverified", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="txn_1", category="transaction_anomaly", reason="Amount spike", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="vel_1", category="velocity_network", reason="1h surge", severity=SignalSeverity.MEDIUM, score_impact=10),
+        ]
+        res = aggregator.aggregate(signals)
+        assert res.score == 60
+        assert res.level == RiskLevel.MEDIUM
+        assert res.decision == RiskAction.STEP_UP_VERIFICATION
+
+    def test_exact_boundary_61_is_high_hold_for_review(self):
+        aggregator = RiskAggregator()
+        signals = [
+            RiskReason(signal_name="id_1", category="identity_trust", reason="New unverified", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="txn_1", category="transaction_anomaly", reason="Amount spike", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="vel_1", category="velocity_network", reason="1h surge", severity=SignalSeverity.MEDIUM, score_impact=10),
+        ]
+        res = aggregator.aggregate(signals, ml_score=3.0)  # +1 ML contribution -> 61
+        assert res.score == 61
+        assert res.level == RiskLevel.HIGH
+        assert res.decision == RiskAction.HOLD_FOR_REVIEW
+        assert "Hold" in res.recommended_action or "review" in res.recommended_action.lower()
+
+    def test_exact_boundary_80_is_high_hold_for_review(self):
+        aggregator = RiskAggregator()
+        signals = [
+            RiskReason(signal_name="id_1", category="identity_trust", reason="New unverified", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="txn_1", category="transaction_anomaly", reason="Amount spike", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="beh_1", category="behavioral_anomaly", reason="Failed attempts", severity=SignalSeverity.HIGH, score_impact=20),
+            RiskReason(signal_name="vel_1", category="velocity_network", reason="1h surge", severity=SignalSeverity.MEDIUM, score_impact=10),
+        ]
+        res = aggregator.aggregate(signals)
+        assert res.score == 80
+        assert res.level == RiskLevel.HIGH
+        assert res.decision == RiskAction.HOLD_FOR_REVIEW
+
+    def test_exact_boundary_81_is_critical_block(self):
+        aggregator = RiskAggregator()
+        signals = [
+            RiskReason(signal_name="id_1", category="identity_trust", reason="New unverified", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="txn_1", category="transaction_anomaly", reason="Amount spike", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="beh_1", category="behavioral_anomaly", reason="Failed attempts", severity=SignalSeverity.HIGH, score_impact=20),
+            RiskReason(signal_name="vel_1", category="velocity_network", reason="1h surge", severity=SignalSeverity.MEDIUM, score_impact=10),
+        ]
+        res = aggregator.aggregate(signals, ml_score=3.0)  # +1 ML contribution -> 81
+        assert res.score == 81
+        assert res.level == RiskLevel.CRITICAL
+        assert res.decision == RiskAction.BLOCK
+        assert "Block" in res.recommended_action
+
+    def test_exact_boundary_100_is_critical_block(self):
+        aggregator = RiskAggregator()
+        signals = [
+            RiskReason(signal_name="id_1", category="identity_trust", reason="New unverified", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="txn_1", category="transaction_anomaly", reason="Amount spike", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="beh_1", category="behavioral_anomaly", reason="Failed attempts", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="vel_1", category="velocity_network", reason="Surge", severity=SignalSeverity.HIGH, score_impact=15),
+        ]
+        res = aggregator.aggregate(signals, ml_score=30.0)  # ML 10 -> Total = 25+25+25+15+10 = 100
+        assert res.score == 100
+        assert res.level == RiskLevel.CRITICAL
+        assert res.decision == RiskAction.BLOCK
 
     def test_score_max_cap_100_with_extreme_values(self):
         aggregator = RiskAggregator()
@@ -296,3 +387,42 @@ class TestOutputPayloadStructure:
         assert "velocity_network" in data["category_scores"]
         assert "ml_anomaly" in data["category_scores"]
         assert isinstance(data["explanation_data"], dict)
+        assert "recommended_action" in data
+        assert "human_explanation" in data
+
+
+class TestConfigurableThresholdsAndBackendPolicy:
+    """Verifies that thresholds are configurable and backend enforcement works."""
+
+    def test_custom_threshold_configuration(self):
+        # Configure custom thresholds (e.g. stricter policy: Low <= 20, Med <= 50, High <= 70, Critical > 70)
+        custom_aggregator = RiskAggregator(
+            low_max=20,
+            medium_max=50,
+            high_max=70,
+            critical_max=100,
+        )
+        assert custom_aggregator.low_max == 20
+        assert custom_aggregator.medium_max == 50
+        assert custom_aggregator.high_max == 70
+
+        # Score 25 with custom thresholds is MEDIUM (since 25 > 20)
+        signals = [
+            RiskReason(signal_name="id_test", category="identity_trust", reason="test", severity=SignalSeverity.LOW, score_impact=25),
+        ]
+        res = custom_aggregator.aggregate(signals)
+        assert res.score == 25
+        assert res.level == RiskLevel.MEDIUM
+        assert res.decision == RiskAction.STEP_UP_VERIFICATION
+
+        # Score 75 with custom thresholds is CRITICAL (since 75 > 70)
+        signals_75 = [
+            RiskReason(signal_name="id_test", category="identity_trust", reason="test", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="txn_test", category="transaction_anomaly", reason="test", severity=SignalSeverity.HIGH, score_impact=25),
+            RiskReason(signal_name="beh_test", category="behavioral_anomaly", reason="test", severity=SignalSeverity.HIGH, score_impact=25),
+        ]
+        res_75 = custom_aggregator.aggregate(signals_75)
+        assert res_75.score == 75
+        assert res_75.level == RiskLevel.CRITICAL
+        assert res_75.decision == RiskAction.BLOCK
+

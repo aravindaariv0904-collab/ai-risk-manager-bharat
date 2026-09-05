@@ -40,10 +40,12 @@ const RISK_CONFIG = {
     text: 'text-emerald-800',
     badge: 'bg-emerald-100 text-emerald-700',
     icon: CheckCircle,
-    label: 'LOW RISK',
-    message: 'This payment looks safe to proceed.',
+    label: 'LOW RISK · ALLOW',
+    message: 'This payment matches safe behavioral baseline and is approved to proceed.',
     buttonVariant: 'success' as const,
     buttonLabel: 'Continue Payment',
+    isBlocked: false,
+    isHold: false,
   },
   MEDIUM: {
     gradient: 'from-amber-500 to-orange-500',
@@ -52,34 +54,40 @@ const RISK_CONFIG = {
     text: 'text-amber-800',
     badge: 'bg-amber-100 text-amber-700',
     icon: Info,
-    label: 'MEDIUM RISK',
-    message: 'Please verify the recipient before proceeding.',
+    label: 'MEDIUM RISK · STEP-UP VERIFICATION',
+    message: 'First-time recipient or unusual parameter detected. Step-up verification required.',
     buttonVariant: 'warning' as const,
-    buttonLabel: 'I Verified — Continue',
+    buttonLabel: 'Verify Recipient & Continue',
+    isBlocked: false,
+    isHold: false,
   },
   HIGH: {
-    gradient: 'from-red-500 to-rose-600',
-    bg: 'bg-red-50',
-    border: 'border-red-200',
-    text: 'text-red-800',
-    badge: 'bg-red-100 text-red-700',
+    gradient: 'from-orange-500 to-rose-600',
+    bg: 'bg-orange-50',
+    border: 'border-orange-200',
+    text: 'text-orange-950',
+    badge: 'bg-orange-100 text-orange-800 font-bold',
     icon: AlertTriangle,
-    label: 'HIGH RISK',
-    message: 'Strong warning: Verify the recipient carefully before proceeding.',
-    buttonVariant: 'destructive' as const,
-    buttonLabel: 'Proceed Anyway (High Risk)',
+    label: 'HIGH RISK · HOLD FOR REVIEW',
+    message: 'High risk detected. Payment is held for security & compliance review and cannot be directly captured.',
+    buttonVariant: 'secondary' as const,
+    buttonLabel: 'Submit for Manual Review',
+    isBlocked: false,
+    isHold: true,
   },
   CRITICAL: {
     gradient: 'from-rose-700 to-red-950',
     bg: 'bg-rose-50',
     border: 'border-rose-300',
-    text: 'text-rose-900',
-    badge: 'bg-rose-200 text-rose-900 font-bold',
+    text: 'text-rose-950',
+    badge: 'bg-rose-200 text-rose-900 font-extrabold',
     icon: AlertTriangle,
-    label: 'CRITICAL RISK',
-    message: 'CRITICAL: High fraud indicators detected. Transaction is blocked.',
+    label: 'CRITICAL RISK · BLOCKED',
+    message: 'Severe risk patterns and anomalies detected. This payment has been blocked by policy.',
     buttonVariant: 'destructive' as const,
-    buttonLabel: 'Transaction Blocked (Critical Risk)',
+    buttonLabel: 'Transaction Blocked',
+    isBlocked: true,
+    isHold: false,
   },
 }
 
@@ -111,6 +119,7 @@ export default function PaymentRiskPage() {
   const [error, setError] = useState<string | null>(null)
   const [aiLoading, setAiLoading] = useState(false)
   const [completed, setCompleted] = useState(false)
+  const [holdSubmitted, setHoldSubmitted] = useState(false)
   const [orderId, setOrderId] = useState<string | null>(null)
 
   const {
@@ -416,6 +425,19 @@ export default function PaymentRiskPage() {
 
   async function onContinue() {
     if (!result || !selectedMerchant) return
+
+    // 1. CRITICAL Risk: Blocked by Policy
+    if (result.risk_level === 'CRITICAL' || result.risk_action === 'BLOCK') {
+      setError('Transaction is blocked by risk security policy (Score: 81-100). Payment cannot be made.')
+      return
+    }
+
+    // 2. HIGH Risk: Held for Review
+    if (result.risk_level === 'HIGH' || result.risk_action === 'HOLD_FOR_REVIEW') {
+      setHoldSubmitted(true)
+      return
+    }
+
     setProcessing(true)
     setError(null)
     try {
@@ -447,9 +469,40 @@ export default function PaymentRiskPage() {
     setResult(null)
     setExplanation(null)
     setRecommendation(null)
+    setHoldSubmitted(false)
   }
 
   const riskConfig = result ? RISK_CONFIG[result.risk_level as keyof typeof RISK_CONFIG] || RISK_CONFIG.MEDIUM : null
+
+  if (holdSubmitted) {
+    return (
+      <div className="mx-auto max-w-lg space-y-6 animate-fade-in-up">
+        <div className="rounded-2xl bg-gradient-to-br from-orange-50 to-amber-50 border border-orange-200 p-8 text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-orange-100">
+            <AlertTriangle className="h-8 w-8 text-orange-600" />
+          </div>
+          <h2 className="text-xl font-bold text-orange-950">Payment Held for Manual Review</h2>
+          <p className="mt-2 text-sm text-orange-800">
+            Transaction <span className="font-mono font-bold text-xs">{result?.transaction_id}</span> has been logged and placed on hold.
+          </p>
+          <div className="mt-4 rounded-xl bg-white/80 border border-orange-200 p-3.5 text-xs text-left space-y-1.5">
+            <p className="text-muted-foreground">Recipient: <strong className="text-foreground">{selectedMerchant?.business_name}</strong></p>
+            <p className="text-muted-foreground">Amount: <strong className="text-orange-700 font-bold">{formatINR(amount * 100)}</strong></p>
+            <p className="text-muted-foreground">Decision: <span className="text-orange-600 font-semibold uppercase">HOLD FOR REVIEW (Score: {result?.risk_score}/100)</span></p>
+            <p className="text-muted-foreground">Status: <span className="text-slate-600 font-medium">Under Compliance Review</span></p>
+          </div>
+          <div className="mt-6 flex gap-3 justify-center">
+            <Button
+              variant="outline"
+              onClick={() => { setHoldSubmitted(false); setResult(null); setExplanation(null); setOrderId(null); }}
+            >
+              Back to Risk Check
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (completed) {
     return (
@@ -935,25 +988,45 @@ export default function PaymentRiskPage() {
                   <X className="h-4 w-4" />
                   Cancel
                 </Button>
-                <Button
-                  className={cn(
-                    'flex-1 h-11 font-semibold',
-                    result.risk_level === 'HIGH' ? 'bg-red-600 hover:bg-red-700 text-white' :
-                    result.risk_level === 'MEDIUM' ? 'bg-amber-500 hover:bg-amber-600 text-white' :
-                    'btn-primary-gradient',
-                  )}
-                  onClick={onContinue}
-                  loading={processing}
-                >
-                  <ArrowRight className="h-4 w-4" />
-                  {riskConfig.buttonLabel}
-                </Button>
+                {riskConfig.isBlocked ? (
+                  <Button
+                    disabled
+                    className="flex-1 h-11 font-bold bg-rose-100 text-rose-700 border border-rose-300 cursor-not-allowed opacity-80"
+                  >
+                    <AlertTriangle className="h-4 w-4 mr-1.5" />
+                    Transaction Blocked
+                  </Button>
+                ) : (
+                  <Button
+                    className={cn(
+                      'flex-1 h-11 font-semibold',
+                      result.risk_level === 'HIGH' ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-md' :
+                      result.risk_level === 'MEDIUM' ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-md' :
+                      'btn-primary-gradient',
+                    )}
+                    onClick={onContinue}
+                    loading={processing}
+                  >
+                    <ArrowRight className="h-4 w-4" />
+                    {riskConfig.buttonLabel}
+                  </Button>
+                )}
               </div>
 
+              {result.risk_level === 'CRITICAL' && (
+                <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-center">
+                  <p className="text-xs text-rose-800 font-bold">
+                    ⛔ CRITICAL RISK (Score {result.risk_score}/100): Payment is permanently blocked by security policy.
+                  </p>
+                </div>
+              )}
+
               {result.risk_level === 'HIGH' && (
-                <p className="text-center text-xs text-red-600 font-medium">
-                  ⚠ You are overriding a HIGH RISK warning. Verify the recipient's identity before proceeding.
-                </p>
+                <div className="rounded-xl bg-orange-50 border border-orange-200 p-3 text-center">
+                  <p className="text-xs text-orange-900 font-medium">
+                    ⏸️ HOLD FOR REVIEW (Score {result.risk_score}/100): Direct capture is disabled. Submitting will send this transaction to the compliance review queue.
+                  </p>
+                </div>
               )}
             </CardContent>
           </Card>
