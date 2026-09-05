@@ -28,16 +28,19 @@ FALLBACK_TEMPLATES: dict[Language, dict[str, str]] = {
         "LOW": "This payment appears normal. You can proceed safely.",
         "MEDIUM": "This payment has some unusual patterns. Please verify the recipient before proceeding.",
         "HIGH": "This payment looks risky. We strongly recommend verifying the recipient before continuing.",
+        "CRITICAL": "Critical risk of fraud detected. This payment is blocked to protect your funds.",
     },
     Language.HI: {
         "LOW": "यह भुगतान सामान्य लगता है। आप सुरक्षित रूप से आगे बढ़ सकते हैं।",
         "MEDIUM": "इस भुगतान में कुछ असामान्य पैटर्न हैं। कृपया आगे बढ़ने से पहले प्राप्तकर्ता को सत्यापित करें।",
         "HIGH": "यह भुगतान जोखिम भरा लगता है। जारी रखने से पहले प्राप्तकर्ता को सत्यापित करें।",
+        "CRITICAL": "धोखाधड़ी का गंभीर जोखिम पाया गया। आपके पैसों की सुरक्षा के लिए यह भुगतान रोक दिया गया है।",
     },
     Language.TA: {
         "LOW": "இந்தக் கட்டணம் இயல்பானது. நீங்கள் பாதுகாப்பாகத் தொடரலாம்.",
         "MEDIUM": "இந்தக் கட்டணத்தில் சில அசாதாரண வடிவங்கள் உள்ளன. தொடரும் முன் பெறுபவரை சரிபார்க்கவும்.",
         "HIGH": "இந்தக் கட்டணம் ஆபத்தானது. தொடரும் முன் பெறுபவரை சரிபார்க்க வலியுறுத்துகிறோம்.",
+        "CRITICAL": "மோசடி ஏற்படும் அதிக ஆபத்து கண்டறியப்பட்டது. உங்கள் பணத்தைப் பாதுகாக்க இந்தக் கட்டணம் தடுக்கப்பட்டுள்ளது.",
     },
 }
 
@@ -56,6 +59,11 @@ RECOMMENDATIONS = {
         Language.EN: "Stop and verify the recipient carefully before proceeding.",
         Language.HI: "आगे बढ़ने से पहले प्राप्तकर्ता को ध्यान से सत्यापित करें।",
         Language.TA: "தொடரும் முன் பெறுபவரை கவனமாக சரிபார்க்கவும்.",
+    },
+    "CRITICAL": {
+        Language.EN: "Do not complete payment. Transaction blocked to prevent loss.",
+        Language.HI: "भुगतान पूरा न करें। नुकसान से बचने के लिए लेन-देन रोक दिया गया है।",
+        Language.TA: "கட்டணத்தை முடிக்க வேண்டாம். இழப்பைத் தடுக்க பரிவர்த்தனை தடுக்கப்பட்டது.",
     },
 }
 

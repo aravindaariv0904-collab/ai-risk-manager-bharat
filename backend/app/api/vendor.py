@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from app.schemas import (
     VendorDashboardResponse, SuspiciousClaim, RiskAlert,
-    PaymentVerificationRequest, PaymentVerificationResponse,
+    PaymentVerificationRequest, PaymentVerificationResponse, VerificationStatus,
     TransactionListResponse, TransactionResponse,
 )
 from app.security.auth import get_current_user_id, get_current_user_role
@@ -107,50 +107,101 @@ async def verify_payment(
     supabase = get_supabase_admin()
     merchant_id = await get_merchant_id(user_id)
 
+    # 1. Look up transaction in local DB
     txn = supabase.table("transactions").select("*").eq("razorpay_payment_id", payment_id).eq("merchant_id", merchant_id).order("created_at", desc=True).limit(1).execute()
 
-    if txn.data and txn.data[0]["status"] == "captured":
+    if txn.data:
         txn_data = txn.data[0]
-        return PaymentVerificationResponse(
-            verified=True,
-            payment_id=payment_id,
-            amount=txn_data["amount"],
-            status=txn_data["status"],
-            captured_at=txn_data.get("updated_at"),
-            risk_level=txn_data.get("risk_level"),
-            message="Payment verified successfully",
-        )
+        actual_status = txn_data["status"]
+        actual_amount = txn_data["amount"]
 
+        if actual_status == "captured":
+            return PaymentVerificationResponse(
+                verified=True,
+                verification_status=VerificationStatus.VERIFIED,
+                payment_id=payment_id,
+                amount=actual_amount,
+                status=actual_status,
+                captured_at=txn_data.get("updated_at"),
+                risk_level=txn_data.get("risk_level"),
+                message="Payment verified successfully in system.",
+            )
+        elif actual_status == "refunded":
+            return PaymentVerificationResponse(
+                verified=False,
+                verification_status=VerificationStatus.REFUNDED,
+                payment_id=payment_id,
+                amount=actual_amount,
+                status=actual_status,
+                message="Payment has been refunded. Do not release goods.",
+            )
+        elif actual_status == "failed":
+            return PaymentVerificationResponse(
+                verified=False,
+                verification_status=VerificationStatus.FAILED,
+                payment_id=payment_id,
+                amount=actual_amount,
+                status=actual_status,
+                message="Payment failed. Do not release goods.",
+            )
+        else:
+            return PaymentVerificationResponse(
+                verified=False,
+                verification_status=VerificationStatus.PENDING,
+                payment_id=payment_id,
+                amount=actual_amount,
+                status=actual_status,
+                message=f"Payment status is {actual_status}. Not yet captured.",
+            )
+
+    # 2. Query Razorpay API directly if not in local DB or pending sync
     try:
         payment = await razorpay_service.fetch_payment(payment_id)
         if payment.status == "captured":
             return PaymentVerificationResponse(
                 verified=True,
+                verification_status=VerificationStatus.VERIFIED,
                 payment_id=payment_id,
                 amount=payment.amount,
                 status=payment.status,
                 captured_at=payment.captured_at,
                 risk_level=None,
-                message="Payment verified with Razorpay",
+                message="Payment verified directly with Razorpay gateway.",
+            )
+        elif payment.status == "refunded":
+            return PaymentVerificationResponse(
+                verified=False,
+                verification_status=VerificationStatus.REFUNDED,
+                payment_id=payment_id,
+                amount=payment.amount,
+                status=payment.status,
+                message="Payment is refunded on Razorpay.",
+            )
+        elif payment.status == "failed":
+            return PaymentVerificationResponse(
+                verified=False,
+                verification_status=VerificationStatus.FAILED,
+                payment_id=payment_id,
+                amount=payment.amount,
+                status=payment.status,
+                message="Payment failed on Razorpay.",
             )
         return PaymentVerificationResponse(
             verified=False,
+            verification_status=VerificationStatus.PENDING,
             payment_id=payment_id,
             amount=payment.amount,
             status=payment.status,
-            captured_at=None,
-            risk_level=None,
-            message="Payment not captured or not found",
+            message="Payment not captured yet on Razorpay.",
         )
     except Exception:
         return PaymentVerificationResponse(
             verified=False,
+            verification_status=VerificationStatus.NOT_FOUND,
             payment_id=payment_id,
             amount=None,
             status=None,
-            captured_at=None,
-            risk_level=None,
-            message="No matching successful payment found. Do not release the order.",
+            message="No matching successful payment found. Do not release goods based on screenshots.",
         )
 
 
@@ -162,17 +213,150 @@ async def verify_payment_by_details(
     supabase = get_supabase_admin()
     merchant_id = await get_merchant_id(user_id)
 
-    query = supabase.table("transactions").select("*").eq("merchant_id", merchant_id)
+    # If payment_id is provided, search primarily by payment_id
+    if request.payment_id:
+        # Check DB first
+        txn = supabase.table("transactions").select("*").eq("razorpay_payment_id", request.payment_id).eq("merchant_id", merchant_id).order("created_at", desc=True).limit(1).execute()
 
+        if txn.data:
+            txn_data = txn.data[0]
+            actual_amount = txn_data["amount"]
+            actual_status = txn_data["status"]
+
+            # Claimed amount verification
+            if request.amount is not None and request.amount != actual_amount:
+                # Log audit event for fake screenshot/amount mismatch attempt
+                try:
+                    supabase.table("transaction_audits").insert({
+                        "transaction_id": txn_data["id"],
+                        "event_name": "VENDOR_VERIFICATION_MISMATCH",
+                        "actor": user_id,
+                        "details": {
+                            "claimed_amount": request.amount,
+                            "actual_amount": actual_amount,
+                            "payment_id": request.payment_id,
+                            "warning": "Fake screenshot or tampered receipt detected",
+                        }
+                    }).execute()
+                except Exception:
+                    pass
+
+                return PaymentVerificationResponse(
+                    verified=False,
+                    verification_status=VerificationStatus.AMOUNT_MISMATCH,
+                    payment_id=request.payment_id,
+                    amount=actual_amount,
+                    claimed_amount=request.amount,
+                    amount_mismatch=True,
+                    status=actual_status,
+                    message=f"Amount mismatch! Claimed ₹{request.amount/100:.2f} but actual payment was ₹{actual_amount/100:.2f}. Do not release goods.",
+                )
+
+            if actual_status == "captured":
+                return PaymentVerificationResponse(
+                    verified=True,
+                    verification_status=VerificationStatus.VERIFIED,
+                    payment_id=request.payment_id,
+                    amount=actual_amount,
+                    claimed_amount=request.amount,
+                    status=actual_status,
+                    captured_at=txn_data.get("updated_at"),
+                    risk_level=txn_data.get("risk_level"),
+                    message="Payment verified successfully in system.",
+                )
+            elif actual_status == "refunded":
+                return PaymentVerificationResponse(
+                    verified=False,
+                    verification_status=VerificationStatus.REFUNDED,
+                    payment_id=request.payment_id,
+                    amount=actual_amount,
+                    claimed_amount=request.amount,
+                    status=actual_status,
+                    message="Payment was refunded. Do not release goods.",
+                )
+            elif actual_status == "failed":
+                return PaymentVerificationResponse(
+                    verified=False,
+                    verification_status=VerificationStatus.FAILED,
+                    payment_id=request.payment_id,
+                    amount=actual_amount,
+                    claimed_amount=request.amount,
+                    status=actual_status,
+                    message="Payment failed. Do not release goods.",
+                )
+            else:
+                return PaymentVerificationResponse(
+                    verified=False,
+                    verification_status=VerificationStatus.PENDING,
+                    payment_id=request.payment_id,
+                    amount=actual_amount,
+                    claimed_amount=request.amount,
+                    status=actual_status,
+                    message=f"Payment status is {actual_status}. Not captured.",
+                )
+
+        # Query Razorpay API
+        try:
+            payment = await razorpay_service.fetch_payment(request.payment_id)
+            if request.amount is not None and request.amount != payment.amount:
+                return PaymentVerificationResponse(
+                    verified=False,
+                    verification_status=VerificationStatus.AMOUNT_MISMATCH,
+                    payment_id=request.payment_id,
+                    amount=payment.amount,
+                    claimed_amount=request.amount,
+                    amount_mismatch=True,
+                    status=payment.status,
+                    message=f"Amount mismatch! Claimed ₹{request.amount/100:.2f} but actual Razorpay payment was ₹{payment.amount/100:.2f}. Do not release goods.",
+                )
+
+            if payment.status == "captured":
+                return PaymentVerificationResponse(
+                    verified=True,
+                    verification_status=VerificationStatus.VERIFIED,
+                    payment_id=request.payment_id,
+                    amount=payment.amount,
+                    claimed_amount=request.amount,
+                    status=payment.status,
+                    captured_at=payment.captured_at,
+                    message="Payment verified with Razorpay gateway.",
+                )
+            else:
+                return PaymentVerificationResponse(
+                    verified=False,
+                    verification_status=VerificationStatus.PENDING if payment.status in ["created", "authorized"] else VerificationStatus.FAILED,
+                    payment_id=request.payment_id,
+                    amount=payment.amount,
+                    claimed_amount=request.amount,
+                    status=payment.status,
+                    message=f"Payment is {payment.status} on Razorpay.",
+                )
+        except Exception:
+            return PaymentVerificationResponse(
+                verified=False,
+                verification_status=VerificationStatus.NOT_FOUND,
+                payment_id=request.payment_id,
+                amount=None,
+                claimed_amount=request.amount,
+                status=None,
+                message="Payment not found in gateway. Do not release goods.",
+            )
+
+    # Search by phone and amount
+    query = supabase.table("transactions").select("*").eq("merchant_id", merchant_id)
     if request.amount:
         query = query.eq("amount", request.amount)
     if request.customer_phone:
         user_resp = supabase.table("users").select("id").eq("phone", request.customer_phone).execute()
         if user_resp.data:
             query = query.eq("payer_id", user_resp.data[0]["id"])
-
-    if request.payment_id:
-        query = query.eq("razorpay_payment_id", request.payment_id)
+        else:
+            return PaymentVerificationResponse(
+                verified=False,
+                verification_status=VerificationStatus.NOT_FOUND,
+                claimed_amount=request.amount,
+                message="Customer phone not registered in system.",
+            )
 
     query = query.order("created_at", desc=True).limit(1)
     result = query.execute()
@@ -181,20 +365,19 @@ async def verify_payment_by_details(
         txn = result.data[0]
         return PaymentVerificationResponse(
             verified=True,
+            verification_status=VerificationStatus.VERIFIED,
             payment_id=txn.get("razorpay_payment_id"),
             amount=txn["amount"],
+            claimed_amount=request.amount,
             status=txn["status"],
             captured_at=txn.get("updated_at"),
             risk_level=txn.get("risk_level"),
-            message="Payment verified successfully",
+            message="Payment verified successfully by customer details.",
         )
 
     return PaymentVerificationResponse(
         verified=False,
-        payment_id=request.payment_id,
-        amount=request.amount,
-        status=None,
-        captured_at=None,
-        risk_level=None,
-        message="No matching successful payment found. Do not release the order.",
+        verification_status=VerificationStatus.NOT_FOUND,
+        claimed_amount=request.amount,
+        message="No matching successful payment found. Do not release goods.",
     )

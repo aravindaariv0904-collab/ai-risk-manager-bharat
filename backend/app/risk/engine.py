@@ -568,15 +568,11 @@ class RiskEngine:
         self.ml_detector = MLAnomalyDetector()
         self.aggregator = RiskAggregator()
 
-    async def evaluate(self, payer_id: str, merchant_id: str, amount: int) -> CompositeRiskResult:
-        ctx = await self.baseline.get_context(payer_id, merchant_id, amount)
-
+    def evaluate_context(self, ctx: TransactionContext, historical_risk: int = 0) -> CompositeRiskResult:
+        """Evaluate a pre-formed TransactionContext directly through rules, ML, and aggregator."""
         rule_reasons = self.rule_engine.evaluate(ctx)
-
         features = self.ml_detector.extract_features(ctx)
         ml_score = self.ml_detector.predict(features)
-
-        historical_risk = await self._get_historical_risk(payer_id)
 
         context_summary = {
             "amount": ctx.amount,
@@ -597,6 +593,11 @@ class RiskEngine:
             historical_risk=historical_risk,
             context_summary=context_summary,
         )
+
+    async def evaluate(self, payer_id: str, merchant_id: str, amount: int) -> CompositeRiskResult:
+        ctx = await self.baseline.get_context(payer_id, merchant_id, amount)
+        historical_risk = await self._get_historical_risk(payer_id)
+        return self.evaluate_context(ctx, historical_risk=historical_risk)
 
     async def _get_historical_risk(self, payer_id: str) -> int:
         """Compute average historical risk factor for the payer from past decisions."""

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import structlog
 
 from app.config import settings
-from app.api import risk, payments, transactions, vendor, webhooks, ai, feedback, admin, merchants, verification
+from app.api import risk, payments, transactions, vendor, webhooks, ai, feedback, admin, merchants, verification, simulator
 from app.services.database import init_db
 
 
@@ -56,6 +56,7 @@ app.include_router(feedback.router)
 app.include_router(admin.router)
 app.include_router(merchants.router)
 app.include_router(verification.router)
+app.include_router(simulator.router)
 
 
 @app.get("/health")

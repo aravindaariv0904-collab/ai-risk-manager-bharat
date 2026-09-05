@@ -238,20 +238,90 @@ class VendorDashboardResponse(BaseModel):
     risk_alerts: List[RiskAlert] = Field(default_factory=list)
 
 
+class VerificationStatus(str, enum.Enum):
+    VERIFIED = "VERIFIED"
+    NOT_FOUND = "NOT_FOUND"
+    PENDING = "PENDING"
+    FAILED = "FAILED"
+    REFUNDED = "REFUNDED"
+    AMOUNT_MISMATCH = "AMOUNT_MISMATCH"
+    UNKNOWN = "UNKNOWN"
+
+
 class PaymentVerificationRequest(BaseModel):
     payment_id: Optional[str] = None
-    amount: Optional[int] = None
+    amount: Optional[int] = None  # Claimed amount in paise
     customer_phone: Optional[str] = None
 
 
 class PaymentVerificationResponse(BaseModel):
     verified: bool
+    verification_status: VerificationStatus = VerificationStatus.UNKNOWN
     payment_id: Optional[str] = None
-    amount: Optional[int] = None
+    amount: Optional[int] = None  # Actual amount in paise
+    claimed_amount: Optional[int] = None  # Claimed amount in paise
+    amount_mismatch: bool = False
     status: Optional[str] = None
     captured_at: Optional[str] = None
     risk_level: Optional[str] = None
     message: str
+
+
+# ---- Simulator ----
+class ScenarioInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+    category: str
+    expected_risk_level: str
+    expected_action: str
+
+
+class SimulatorRunResponse(BaseModel):
+    scenario_id: str
+    scenario_name: str
+    description: str
+    is_demo: bool = True
+    simulated_at: datetime
+    input_payload: Dict
+    risk_assessment: CompositeRiskOutput
+    verification_status: Optional[VerificationStatus] = None
+    demo_badge: str = "DEMO SIMULATION — AI RISK MANAGER FOR BHARAT"
+
+
+# ---- Investigation ----
+class InvestigationAction(str, enum.Enum):
+    APPROVE_RELEASE = "APPROVE_RELEASE"
+    KEEP_ON_HOLD = "KEEP_ON_HOLD"
+    CONFIRM_FRAUD = "CONFIRM_FRAUD"
+    MARK_FALSE_POSITIVE = "MARK_FALSE_POSITIVE"
+
+
+class InvestigationRequest(BaseModel):
+    action: InvestigationAction
+    notes: str = Field(min_length=3, description="Analyst review notes")
+    reviewer_role: str = "risk_analyst"
+
+
+class InvestigationResponse(BaseModel):
+    transaction_id: str
+    action_taken: InvestigationAction
+    previous_status: str
+    new_status: str
+    reviewer_id: str
+    reviewer_role: str
+    timestamp: datetime
+    message: str
+
+
+class FeedbackMetricsResponse(BaseModel):
+    total_reviewed: int = 0
+    false_positive_count: int = 0
+    false_positive_rate: float = 0.0
+    confirmed_fraud_count: int = 0
+    confirmed_fraud_rate: float = 0.0
+    review_rate: float = 0.0
+    pending_review_count: int = 0
 
 
 # ---- Merchants ----
