@@ -1,7 +1,9 @@
 """
-NPCI UPI Directory & Banking Penny Drop KYC Verification Service
-Connects to live Banking APIs (Setu / Cashfree / Razorpay Live) when credentials are provided,
-or resolves from the Verified Merchant & User Registry.
+Merchant & Counterparty Lookup Service.
+Resolves counterparty details from connected banking APIs (when credentials configured)
+or from the internal verified merchant database.
+
+FUTURE INTEGRATION: Government / regulated risk data sources, subject to authorized API access.
 """
 
 import os
@@ -9,7 +11,7 @@ import re
 import httpx
 from typing import Dict, Optional
 
-# Verified Registry (Seeded merchants & verified accounts)
+# Verified Local Directory (Seeded merchants & verified accounts)
 KNOWN_DIRECTORY = {
     "9963170070": {
         "name": "RAVI KUMAR",
@@ -49,8 +51,8 @@ class NPCIDirectoryService:
     async def resolve_phone(phone_10: str) -> Optional[Dict]:
         """
         Resolve a 10-digit Indian phone number:
-        1. Queries Live Banking API (Cashfree / Setu) if API Keys are configured.
-        2. Checks Verified Registry in Database.
+        1. Queries Live Banking API (e.g. Setu / Cashfree) if API Keys are configured.
+        2. Checks internal verified merchant database.
         3. Returns None if unknown (avoids fake/random generated names).
         """
         digits = re.sub(r"\D", "", phone_10)[-10:]
@@ -87,14 +89,14 @@ class NPCIDirectoryService:
                                     "phone": f"+91 {digits}",
                                     "kyc_status": "VERIFIED_FULL_KYC",
                                     "is_verified": True,
-                                    "provider": "Setu Live NPCI Switch",
+                                    "provider": "Banking API Switch",
                                 }
                         except Exception:
                             continue
             except Exception:
                 pass
 
-        # 2. Check Known Verified Registry
+        # 2. Check Known Verified Merchant Registry
         if digits in KNOWN_DIRECTORY:
             record = KNOWN_DIRECTORY[digits]
             return {
@@ -104,11 +106,10 @@ class NPCIDirectoryService:
                 "phone": f"+91 {digits}",
                 "kyc_status": record["kyc_status"],
                 "is_verified": True,
-                "provider": "Verified Merchant Registry",
+                "provider": "Verified Merchant Directory",
             }
 
-        # 3. If not in registry and no live bank API key, return None
-        # This prevents fake / random names from appearing.
+        # 3. If not in directory and no live bank API key, return None
         return None
 
 

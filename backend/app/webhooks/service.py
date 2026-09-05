@@ -130,132 +130,62 @@ class WebhookService:
             raise
 
     async def _handle_event(self, data: Dict[str, Any], parsed: Dict[str, Any]):
-        """Route event to appropriate domain handlers."""
+        """Route event to appropriate domain handlers and post-payment pipeline."""
+        from app.payments.post_payment import post_payment_processor
+
         event_type = data.get("event")
         payment_id = parsed.get("payment_id")
         order_id = parsed.get("order_id")
         amount = parsed.get("amount")
 
         if event_type == "payment.captured":
-            await self._update_transaction_status(
+            await post_payment_processor.process_payment_finalization(
                 payment_id=payment_id,
                 order_id=order_id,
-                amount=amount,
                 target_status=TransactionStatus.CAPTURED,
-                trigger_post_processing=True,
+                amount=amount,
+                actor="WEBHOOK:payment.captured",
             )
 
         elif event_type == "payment.failed":
-            await self._update_transaction_status(
+            await post_payment_processor.process_payment_finalization(
                 payment_id=payment_id,
                 order_id=order_id,
-                amount=amount,
                 target_status=TransactionStatus.FAILED,
-                trigger_post_processing=False,
+                amount=amount,
+                error_details={"error_code": parsed.get("error_code"), "error_description": parsed.get("error_description")},
+                actor="WEBHOOK:payment.failed",
             )
 
         elif event_type == "payment.authorized":
-            await self._update_transaction_status(
+            await post_payment_processor.process_payment_finalization(
                 payment_id=payment_id,
                 order_id=order_id,
-                amount=amount,
                 target_status=TransactionStatus.AUTHORIZED,
-                trigger_post_processing=False,
+                amount=amount,
+                actor="WEBHOOK:payment.authorized",
             )
 
         elif event_type == "order.paid":
-            # Order paid guarantees payment capture; update status if not already captured
-            await self._update_transaction_status(
+            await post_payment_processor.process_payment_finalization(
                 payment_id=payment_id,
                 order_id=order_id,
-                amount=amount,
                 target_status=TransactionStatus.CAPTURED,
-                trigger_post_processing=True,
+                amount=amount,
+                actor="WEBHOOK:order.paid",
             )
 
         elif event_type in ["refund.processed", "refund.created"]:
-            await self._update_transaction_status(
+            await post_payment_processor.process_payment_finalization(
                 payment_id=payment_id,
                 order_id=order_id,
-                amount=amount,
                 target_status=TransactionStatus.REFUNDED,
-                trigger_post_processing=False,
+                amount=amount,
+                actor=f"WEBHOOK:{event_type}",
             )
 
         else:
             logger.info("Received unsupported or informational webhook event", event_type=event_type)
-
-    async def _update_transaction_status(
-        self,
-        payment_id: Optional[str],
-        order_id: Optional[str],
-        amount: Optional[int],
-        target_status: TransactionStatus,
-        trigger_post_processing: bool = False,
-    ):
-        """Update transaction status using validated state transitions."""
-        if not payment_id and not order_id:
-            logger.warning("Cannot update transaction: missing both payment_id and order_id")
-            return
-
-        query = self.supabase.table("transactions").select("*")
-        if payment_id:
-            query = query.eq("razorpay_payment_id", payment_id)
-        elif order_id:
-            query = query.eq("razorpay_order_id", order_id)
-
-        res = query.execute()
-        if not res.data:
-            logger.info("No existing transaction matched for webhook", payment_id=payment_id, order_id=order_id)
-            return
-
-        txn = res.data[0]
-        txn_id = txn["id"]
-        current_status = normalize_transaction_status(txn.get("status"))
-
-        # Execute validated state transition
-        next_status = transition_transaction(current_status, target_status, strict=False)
-
-        update_payload: Dict[str, Any] = {
-            "status": next_status.value,
-            "updated_at": datetime.utcnow().isoformat(),
-        }
-
-        if payment_id and not txn.get("razorpay_payment_id"):
-            update_payload["razorpay_payment_id"] = payment_id
-        if amount and not txn.get("amount"):
-            update_payload["amount"] = amount
-
-        self.supabase.table("transactions").update(update_payload).eq("id", txn_id).execute()
-        logger.info(
-            "Transaction status updated via webhook",
-            transaction_id=txn_id,
-            from_status=current_status.value,
-            to_status=next_status.value,
-        )
-
-        # Execute post-payment side effects only once upon first capture
-        if trigger_post_processing and next_status == TransactionStatus.CAPTURED and current_status != TransactionStatus.CAPTURED:
-            await self._post_payment_processing(txn_id, txn, amount)
-
-    async def _post_payment_processing(self, txn_id: str, txn: Dict, amount: Optional[int]):
-        """Execute audit logging and merchant profile update upon payment capture."""
-        try:
-            merchant_id = txn.get("merchant_id")
-            if not merchant_id:
-                return
-
-            m_resp = self.supabase.table("merchants").select("risk_profile").eq("id", merchant_id).maybe_single().execute()
-            if m_resp and m_resp.data:
-                profile = m_resp.data.get("risk_profile") or {}
-                captured_amount = amount or txn.get("amount") or 0
-                total_captured = profile.get("total_captured_volume", 0) + captured_amount
-                profile["total_captured_volume"] = total_captured
-                profile["last_payment_at"] = datetime.utcnow().isoformat()
-                self.supabase.table("merchants").update({"risk_profile": profile}).eq("id", merchant_id).execute()
-                logger.info("Merchant profile volume updated after capture", merchant_id=merchant_id, total_captured=total_captured)
-        except Exception as e:
-            logger.warning("Post-payment merchant profile update warning", error=str(e), transaction_id=txn_id)
 
 
 webhook_service = WebhookService()

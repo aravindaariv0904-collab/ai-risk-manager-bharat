@@ -275,7 +275,7 @@ class BehavioralBaseline:
         return self._supabase
 
     async def get_context(self, payer_id: str, merchant_id: str, amount: int) -> TransactionContext:
-        import numpy as np
+        from app.risk.behavioral import behavioral_baseline_engine
 
         now = datetime.utcnow()
         hour = now.hour
@@ -291,7 +291,7 @@ class BehavioralBaseline:
         merchant_category = None
         try:
             m_resp = self.supabase.table("merchants").select("*").eq("id", merchant_id).maybe_single().execute()
-            if m_resp.data:
+            if m_resp and m_resp.data:
                 merchant_category = m_resp.data.get("business_category")
                 profile = m_resp.data.get("risk_profile") or {}
                 if isinstance(profile, dict) and profile.get("is_verified") is False:
@@ -299,48 +299,12 @@ class BehavioralBaseline:
         except Exception:
             pass
 
-        amounts = [txn["amount"] for txn in recent_txns if txn.get("amount") is not None]
-        avg_amount = float(np.mean(amounts)) if amounts else 0.0
-        median_amount = float(np.median(amounts)) if amounts else 0.0
-        p95_amount = float(np.percentile(amounts, 95)) if amounts else 0.0
-
-        def parse_dt(val):
-            if isinstance(val, datetime):
-                return val.replace(tzinfo=None) if val.tzinfo else val
-            if isinstance(val, str):
-                try:
-                    return datetime.fromisoformat(val.replace("Z", "+00:00")).replace(tzinfo=None)
-                except Exception:
-                    pass
-            return datetime.utcnow()
-
-        txn_count_1h = len([t for t in recent_txns if (now - parse_dt(t.get("created_at"))).total_seconds() < 3600])
-        txn_count_24h = len([t for t in recent_txns if (now - parse_dt(t.get("created_at"))).total_seconds() < 86400])
-        txn_count_7d = len([t for t in recent_txns if (now - parse_dt(t.get("created_at"))).total_seconds() < 604800])
-
-        failed_count_24h = len([
-            t for t in recent_txns
-            if t.get("status") == "failed" and (now - parse_dt(t.get("created_at"))).total_seconds() < 86400
-        ])
-
-        merchant_counts: Dict[str, int] = {}
-        for t in recent_txns:
-            mid = t.get("merchant_id")
-            if mid:
-                merchant_counts[mid] = merchant_counts.get(mid, 0) + 1
-        frequent_merchants = sorted(merchant_counts, key=merchant_counts.get, reverse=True)[:5]
-
-        hours = [parse_dt(t.get("created_at")).hour for t in recent_txns]
-        hour_counts: Dict[int, int] = {}
-        for h in hours:
-            hour_counts[h] = hour_counts.get(h, 0) + 1
-        typical_hours = sorted(hour_counts, key=hour_counts.get, reverse=True)[:3]
-
-        merchant_category_history = []
-        for t in recent_txns:
-            cat = t.get("merchant_category") or t.get("category")
-            if cat and cat not in merchant_category_history:
-                merchant_category_history.append(cat)
+        # Compute robust behavioral baseline
+        profile = behavioral_baseline_engine.compute_profile_from_history(
+            payer_id=payer_id,
+            historical_txns=recent_txns,
+            reference_time=now,
+        )
 
         return TransactionContext(
             amount=amount,
@@ -351,17 +315,17 @@ class BehavioralBaseline:
             day_of_week=day_of_week,
             is_new_recipient=is_new_recipient,
             is_unverified_merchant=is_unverified,
-            txn_count_1h=txn_count_1h,
-            txn_count_24h=txn_count_24h,
-            txn_count_7d=txn_count_7d,
-            failed_count_24h=failed_count_24h,
-            avg_amount=avg_amount,
-            median_amount=median_amount,
-            p95_amount=p95_amount,
-            frequent_merchants=frequent_merchants,
-            typical_hours=typical_hours,
+            txn_count_1h=profile.velocity_1h,
+            txn_count_24h=profile.velocity_24h,
+            txn_count_7d=profile.velocity_7d,
+            failed_count_24h=profile.failed_count_24h,
+            avg_amount=profile.mean_amount,
+            median_amount=profile.median_amount,
+            p95_amount=profile.p95_amount,
+            frequent_merchants=profile.top_merchants,
+            typical_hours=profile.typical_hours,
             merchant_category=merchant_category,
-            merchant_category_history=merchant_category_history,
+            merchant_category_history=profile.merchant_category_history,
         )
 
     async def _get_recent_transactions(self, payer_id: str, days: int = 30) -> List[Dict]:
