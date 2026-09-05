@@ -49,12 +49,23 @@ async def risk_precheck(
         amount=request.amount,
     )
 
+    # Map risk decision to explicit transaction state
+    initial_status = "RISK_CHECKED"
+    if eval_res.decision in [RiskAction.BLOCK]:
+        initial_status = "BLOCKED"
+    elif eval_res.decision in [RiskAction.HOLD_FOR_REVIEW, RiskAction.WARN]:
+        initial_status = "HELD"
+    elif eval_res.decision in [RiskAction.STEP_UP_VERIFICATION, RiskAction.VERIFY]:
+        initial_status = "VERIFICATION_REQUIRED"
+    elif eval_res.decision in [RiskAction.ALLOW]:
+        initial_status = "RISK_CHECKED"
+
     txn_insert = supabase.table("transactions").insert({
         "payer_id": payer_id,
         "merchant_id": str(request.merchant_id),
         "amount": request.amount,
         "currency": request.currency,
-        "status": "created",
+        "status": initial_status,
         "risk_score": eval_res.score,
         "risk_level": eval_res.level.value,
         "risk_action": eval_res.decision.value,

@@ -20,12 +20,7 @@ class Language(str, enum.Enum):
     TA = "ta"
 
 
-class TransactionStatus(str, enum.Enum):
-    CREATED = "created"
-    PENDING = "pending"
-    CAPTURED = "captured"
-    FAILED = "failed"
-    REFUNDED = "refunded"
+from app.payments.state_machine import TransactionStatus
 
 
 class RiskLevel(str, enum.Enum):
@@ -155,7 +150,10 @@ class WebhookEvent(Base):
     event_id = Column(String(100), unique=True, nullable=False, index=True)
     event_type = Column(String(50), nullable=False)
     payload_hash = Column(String(64), nullable=False)
+    payment_id = Column(String(100), index=True)
+    order_id = Column(String(100), index=True)
     processing_status = Column(Enum(WebhookProcessingStatus), default=WebhookProcessingStatus.PENDING, index=True)
+    processing_error = Column(Text)
     received_at = Column(DateTime(timezone=True), server_default=func.now())
     processed_at = Column(DateTime(timezone=True))
 

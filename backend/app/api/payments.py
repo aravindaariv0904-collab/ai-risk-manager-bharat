@@ -14,6 +14,11 @@ from app.security.auth import get_current_user_id
 from app.razorpay.service import razorpay_service
 from app.services.supabase_client import get_supabase_admin
 from app.config import settings
+from app.payments.state_machine import (
+    TransactionStatus,
+    transition_transaction,
+    normalize_transaction_status,
+)
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
 logger = structlog.get_logger()
@@ -162,9 +167,9 @@ async def verify_payment(
 
 
 def _mark_transaction_captured(supabase, payment_id: str, order_id: str, transaction_id=None):
-    """Mark transaction captured and record payment ID."""
+    """Mark transaction captured with state transition validation and record payment ID."""
     try:
-        query = supabase.table("transactions")
+        query = supabase.table("transactions").select("*")
         if transaction_id:
             query = query.eq("id", str(transaction_id))
         elif order_id:
@@ -172,42 +177,73 @@ def _mark_transaction_captured(supabase, payment_id: str, order_id: str, transac
         else:
             query = query.eq("razorpay_payment_id", payment_id)
 
+        res = query.execute()
+        if not res.data:
+            logger.warning("No transaction found to capture", payment_id=payment_id, order_id=order_id, txn_id=transaction_id)
+            return
+
+        txn = res.data[0]
+        txn_id = txn["id"]
+        current_status = normalize_transaction_status(txn.get("status"))
+        next_status = transition_transaction(current_status, TransactionStatus.CAPTURED, strict=False)
+
         update_data = {
-            "status": "captured",
+            "status": next_status.value,
             "razorpay_payment_id": payment_id,
             "updated_at": datetime.utcnow().isoformat(),
         }
-        query.update(update_data).execute()
+        supabase.table("transactions").update(update_data).eq("id", txn_id).execute()
+
+        # Update merchant volume idempotently
+        if current_status != TransactionStatus.CAPTURED and next_status == TransactionStatus.CAPTURED:
+            merchant_id = txn.get("merchant_id")
+            if merchant_id:
+                try:
+                    m_resp = supabase.table("merchants").select("risk_profile").eq("id", merchant_id).maybe_single().execute()
+                    if m_resp and m_resp.data:
+                        profile = m_resp.data.get("risk_profile") or {}
+                        total = profile.get("total_captured_volume", 0) + (txn.get("amount") or 0)
+                        profile["total_captured_volume"] = total
+                        profile["last_payment_at"] = datetime.utcnow().isoformat()
+                        supabase.table("merchants").update({"risk_profile": profile}).eq("id", merchant_id).execute()
+                except Exception as me:
+                    logger.warning("Failed to update merchant volume in payment verify", error=str(me))
+
     except Exception as e:
         logger.warning("Failed to mark transaction captured", error=str(e))
 
 
 def _update_transaction_order_id(supabase, payer_id: str, merchant_id: str, order_id: str, txn_id_hint: Optional[str] = None) -> None:
-    """Update the transaction record with the Razorpay order ID."""
+    """Update transaction record with Razorpay order ID and transition to AUTHORIZED."""
     try:
         if txn_id_hint:
-            supabase.table("transactions").update({
-                "razorpay_order_id": order_id,
-                "status": "pending",
-            }).eq("id", txn_id_hint).execute()
+            res = supabase.table("transactions").select("id, status").eq("id", txn_id_hint).maybe_single().execute()
+            if res and res.data:
+                curr_status = normalize_transaction_status(res.data.get("status"))
+                next_status = transition_transaction(curr_status, TransactionStatus.AUTHORIZED, strict=False)
+                supabase.table("transactions").update({
+                    "razorpay_order_id": order_id,
+                    "status": next_status.value,
+                }).eq("id", txn_id_hint).execute()
             return
 
         result = (
             supabase.table("transactions")
-            .select("id")
+            .select("id, status")
             .eq("payer_id", payer_id)
             .eq("merchant_id", merchant_id)
-            .eq("status", "created")
             .order("created_at", desc=True)
             .limit(1)
             .execute()
         )
         if result.data:
-            txn_id = result.data[0]["id"]
+            txn = result.data[0]
+            curr_status = normalize_transaction_status(txn.get("status"))
+            next_status = transition_transaction(curr_status, TransactionStatus.AUTHORIZED, strict=False)
             supabase.table("transactions").update({
                 "razorpay_order_id": order_id,
-                "status": "pending",
-            }).eq("id", txn_id).execute()
+                "status": next_status.value,
+            }).eq("id", txn["id"]).execute()
     except Exception as e:
         logger.warning("Failed to update transaction order_id", error=str(e))
 
