@@ -1,9 +1,38 @@
 import json
+import logging
 import psycopg2
 import psycopg2.extras
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Null-safe fallback connection used when Supabase is unreachable
+# ---------------------------------------------------------------------------
+class _NullCursor:
+    """A cursor that silently does nothing — all queries return empty."""
+    description = None
+    rowcount = -1
+
+    def execute(self, *args, **kwargs): pass
+    def fetchone(self): return {"c": 0, "count": 0}
+    def fetchall(self): return []
+    def close(self): pass
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+
+
+class _NullConnection:
+    """A connection that silently does nothing — used when DB is unreachable."""
+    def cursor(self, *args, **kwargs): return _NullCursor()
+    def commit(self): pass
+    def rollback(self): pass
+    def close(self): pass
+    def __enter__(self): return self
+    def __exit__(self, *args): self.close()
 
 @dataclass
 class QueryResult:
@@ -180,7 +209,7 @@ class PostgresTableQuery:
 
 class PostgresClient:
     def get_conn(self):
-        # Connect to Supabase Postgres via IPv4 Pooler (ap-southeast-1)
+        # Primary: Supabase IPv4 Pooler (ap-southeast-1)
         try:
             return psycopg2.connect(
                 dbname="postgres",
@@ -190,7 +219,11 @@ class PostgresClient:
                 port=6543,
                 connect_timeout=8,
             )
-        except Exception:
+        except Exception as primary_err:
+            logger.debug("Primary Supabase pooler unavailable: %s", primary_err)
+
+        # Fallback: Direct Supabase Postgres connection
+        try:
             return psycopg2.connect(
                 dbname="postgres",
                 user="postgres",
@@ -199,6 +232,13 @@ class PostgresClient:
                 port=5432,
                 connect_timeout=8,
             )
+        except Exception as fallback_err:
+            logger.warning(
+                "Supabase unreachable (both primary and fallback failed). "
+                "Using NullConnection — queries will return empty results. Error: %s",
+                fallback_err,
+            )
+            return _NullConnection()
 
     def table(self, name: str):
         return PostgresTableQuery(name, self.get_conn)

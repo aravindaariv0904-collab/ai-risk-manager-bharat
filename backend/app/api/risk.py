@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from uuid import UUID
+from uuid import UUID, uuid4
 from typing import List
 
 from app.schemas import (
@@ -12,6 +12,9 @@ from app.risk.engine import risk_engine
 from app.ai.service import explain_risk
 from app.services.supabase_client import get_supabase_admin
 from app.models import RiskDecision, RiskEvent, SignalSeverity as ModelSignalSeverity
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/risk", tags=["risk"])
 
@@ -23,76 +26,93 @@ async def risk_precheck(
 ):
     supabase = get_supabase_admin()
 
-    user_resp = supabase.table("users").select("id").eq("auth_user_id", user_id).maybe_single().execute()
-    if not user_resp.data:
-        payer_id = "d83675e1-4899-4671-81a2-c76e921cb9c8"
-    else:
-        payer_id = user_resp.data["id"]
+    # --- Resolve payer_id (graceful: fall back to demo UUID if DB unreachable) ---
+    payer_id = "d83675e1-4899-4671-81a2-c76e921cb9c8"
+    try:
+        user_resp = supabase.table("users").select("id").eq("auth_user_id", user_id).maybe_single().execute()
+        if user_resp and user_resp.data:
+            payer_id = user_resp.data["id"]
+    except Exception as e:
+        logger.warning("Could not resolve payer_id from DB, using demo fallback: %s", e)
 
-    merchant_resp = supabase.table("merchants").select("id").eq("id", str(request.merchant_id)).maybe_single().execute()
-    if not merchant_resp.data:
-        new_m = {
-            "id": str(request.merchant_id),
-            "user_id": None,
-            "business_name": "Unverified Recipient",
-            "business_category": "Direct Transfer",
-            "risk_profile": {"is_verified": False, "baseline_safety": "unverified_mobile_transfer"}
-        }
-        try:
-            supabase.table("merchants").insert(new_m).execute()
-        except Exception:
-            pass
+    # --- Ensure merchant record exists (best-effort) ---
+    try:
+        merchant_resp = supabase.table("merchants").select("id").eq("id", str(request.merchant_id)).maybe_single().execute()
+        if not merchant_resp or not merchant_resp.data:
+            new_m = {
+                "id": str(request.merchant_id),
+                "user_id": None,
+                "business_name": "Unverified Recipient",
+                "business_category": "Direct Transfer",
+                "risk_profile": {"is_verified": False, "baseline_safety": "unverified_mobile_transfer"}
+            }
+            try:
+                supabase.table("merchants").insert(new_m).execute()
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug("Merchant lookup skipped (DB unavailable): %s", e)
 
+    # --- Run risk evaluation (fully in-memory, never fails) ---
     eval_res = await risk_engine.evaluate(
         payer_id=payer_id,
         merchant_id=str(request.merchant_id),
         amount=request.amount,
     )
 
-    # Map risk decision to explicit transaction state
-    initial_status = "RISK_CHECKED"
-    if eval_res.decision in [RiskAction.BLOCK]:
-        initial_status = "BLOCKED"
-    elif eval_res.decision in [RiskAction.HOLD_FOR_REVIEW, RiskAction.WARN]:
-        initial_status = "HELD"
-    elif eval_res.decision in [RiskAction.STEP_UP_VERIFICATION, RiskAction.VERIFY]:
-        initial_status = "VERIFICATION_REQUIRED"
-    elif eval_res.decision in [RiskAction.ALLOW]:
-        initial_status = "RISK_CHECKED"
+    # --- Map risk decision to transaction state ---
+    # Note: DB constraint allows 'created','pending','captured','failed','refunded'
+    # Risk outcome is stored in risk_level and risk_action columns separately.
+    initial_status = "created"
 
-    txn_insert = supabase.table("transactions").insert({
-        "payer_id": payer_id,
-        "merchant_id": str(request.merchant_id),
-        "amount": request.amount,
-        "currency": request.currency,
-        "status": initial_status,
-        "risk_score": eval_res.score,
-        "risk_level": eval_res.level.value,
-        "risk_action": eval_res.decision.value,
-    }).execute()
-
-    transaction_id = txn_insert.data[0]["id"]
-
-    for reason in eval_res.signals:
-        supabase.table("risk_events").insert({
-            "transaction_id": transaction_id,
-            "signal_name": reason.signal_name,
-            "signal_value": {"category": reason.category} if reason.category else {},
-            "severity": reason.severity.value,
-            "score_impact": reason.score_impact,
-            "reason": reason.reason,
+    # --- Persist transaction (best-effort; use a synthetic ID if DB fails) ---
+    transaction_id = str(uuid4())
+    try:
+        txn_insert = supabase.table("transactions").insert({
+            "payer_id": payer_id,
+            "merchant_id": str(request.merchant_id),
+            "amount": request.amount,
+            "currency": request.currency,
+            "status": initial_status,
+            "risk_score": eval_res.score,
+            "risk_level": eval_res.level.value,
+            "risk_action": eval_res.decision.value,
         }).execute()
+        if txn_insert and txn_insert.data and len(txn_insert.data) > 0:
+            real_id = txn_insert.data[0].get("id")
+            if real_id:
+                transaction_id = real_id
+    except Exception as e:
+        logger.warning("Transaction insert failed (DB unavailable), using synthetic ID %s: %s", transaction_id, e)
 
-    supabase.table("risk_decisions").insert({
-        "transaction_id": transaction_id,
-        "score": eval_res.score,
-        "level": eval_res.level.value,
-        "action": eval_res.decision.value,
-        "explanation": eval_res.human_explanation,
-        "category_scores": eval_res.category_scores.model_dump(),
-        "explanation_data": eval_res.explanation_data,
-        "model_version": "v2.0",
-    }).execute()
+    # --- Persist risk events (best-effort) ---
+    for reason in eval_res.signals:
+        try:
+            supabase.table("risk_events").insert({
+                "transaction_id": transaction_id,
+                "signal_name": reason.signal_name,
+                "signal_value": {"category": reason.category} if reason.category else {},
+                "severity": reason.severity.value,
+                "score_impact": reason.score_impact,
+                "reason": reason.reason,
+            }).execute()
+        except Exception:
+            pass
+
+    # --- Persist risk decision (best-effort) ---
+    try:
+        supabase.table("risk_decisions").insert({
+            "transaction_id": transaction_id,
+            "score": eval_res.score,
+            "level": eval_res.level.value,
+            "action": eval_res.decision.value,
+            "explanation": eval_res.human_explanation,
+            "category_scores": eval_res.category_scores.model_dump(),
+            "explanation_data": eval_res.explanation_data,
+            "model_version": "v2.0",
+        }).execute()
+    except Exception as e:
+        logger.warning("Risk decision persist failed (DB unavailable): %s", e)
 
     return RiskPrecheckResponse(
         transaction_id=transaction_id,

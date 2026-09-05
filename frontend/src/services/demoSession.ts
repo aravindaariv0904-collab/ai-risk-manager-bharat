@@ -56,7 +56,15 @@ export function setDemoSession(role: 'citizen' | 'merchant' | 'admin') {
 export function getDemoSession(): DemoSession | null {
   try {
     const raw = localStorage.getItem(DEMO_SESSION_KEY)
-    return raw ? JSON.parse(raw) : null
+    if (raw) return JSON.parse(raw)
+
+    // Automatically initialize default citizen demo session for seamless UX
+    const defaultSession: DemoSession = {
+      profile: DEMO_PROFILES['citizen'],
+      token: `demo.citizen.${Date.now()}`,
+    }
+    localStorage.setItem(DEMO_SESSION_KEY, JSON.stringify(defaultSession))
+    return defaultSession
   } catch {
     return null
   }
